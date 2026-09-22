@@ -1,0 +1,6 @@
+{
+  "name": "Phone",
+  "description": "Modern Material You phone dialer web app matching Android Phone UI, optimized for Android WebView, full-screen mobile, and GitHub/Vercel deployment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
