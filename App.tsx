@@ -1,427 +1,513 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { Contact, CallLog, SimConfig, ActiveCallState } from './types';
-import { INITIAL_CONTACTS, INITIAL_CALL_LOGS, INITIAL_SIMS } from './data/initialData';
-import StatusBar from './components/StatusBar';
-import SearchHeader from './components/SearchHeader';
-import CallHistoryList from './components/CallHistoryList';
-import DialpadSheet from './components/DialpadSheet';
-import SimSelectionDialog from './components/SimSelectionDialog';
-import InCallScreen from './components/InCallScreen';
-import NavigationDrawer from './components/NavigationDrawer';
-import NewContactModal from './components/NewContactModal';
-import ContactsModal from './components/ContactsModal';
-import SettingsModal from './components/SettingsModal';
-import HelpModal from './components/HelpModal';
-import BottomNavBar from './components/BottomNavBar';
-import { playEndCallTone, triggerHaptic } from './utils/audio';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { 
+  Phone, PhoneCall, PhoneIncoming, PhoneOutgoing, PhoneMissed, 
+  User, Users, Clock, Search, Plus, Trash2, Settings, HelpCircle, 
+  Menu, X, Mic, MicOff, Volume2, VolumeX, Disc, Keypad, 
+  ArrowLeft, Check, Sparkles, AlertCircle, Info, RefreshCw
+} from 'lucide-react';
 
-export default function App() {
-  // State: Contacts, Call Logs, SIMs
+interface Contact {
+  id: string;
+  name: string;
+  phoneNumber: string;
+  avatarColor: string;
+  category?: 'Family' | 'Work' | 'Friends' | 'Services';
+  isStarred?: boolean;
+}
+
+interface CallLog {
+  id: string;
+  contactName?: string;
+  phoneNumber: string;
+  type: 'incoming' | 'outgoing' | 'missed';
+  timestamp: string;
+  simSlot: 1 | 2;
+  duration?: string;
+}
+
+interface SimConfig {
+  id: 1 | 2;
+  name: string;
+  carrier: string;
+  color: string;
+  active: boolean;
+}
+
+interface ActiveCallState {
+  contactName?: string;
+  phoneNumber: string;
+  simSlot: 1 | 2;
+  status: 'connecting' | 'ringing' | 'connected' | 'ended';
+  duration: number;
+  isMuted: boolean;
+  isSpeakerOn: boolean;
+  isRecording: boolean;
+  isKeypadOpen: boolean;
+}
+
+const initialContacts: Contact[] = [
+  { id: '1', name: 'Abebe Bikila', phoneNumber: '0911234567', avatarColor: '#10B981', category: 'Family', isStarred: true },
+  { id: '2', name: 'Almaz Ayana', phoneNumber: '0922345678', avatarColor: '#3B82F6', category: 'Friends', isStarred: true },
+  { id: '3', name: 'Ethio Telecom Customer Service', phoneNumber: '994', avatarColor: '#F59E0B', category: 'Services' },
+  { id: '4', name: 'Commercial Bank of Ethiopia (CBE)', phoneNumber: '951', avatarColor: '#8B5CF6', category: 'Services', isStarred: true },
+  { id: '5', name: 'Chala Regassa', phoneNumber: '0933456789', avatarColor: '#EC4899', category: 'Work' },
+  { id: '6', name: 'Dr. Bethlehem', phoneNumber: '0944567890', avatarColor: '#06B6D4', category: 'Work' },
+  { id: '7', name: 'Federal Police Hotline', phoneNumber: '991', avatarColor: '#EF4444', category: 'Services' }
+];
+
+const initialCallLogs: CallLog[] = [
+  { id: 'log-1', contactName: 'Abebe Bikila', phoneNumber: '0911234567', type: 'incoming', timestamp: 'Today, 2:15 PM', simSlot: 1, duration: '2m 14s' },
+  { id: 'log-2', contactName: 'Commercial Bank of Ethiopia (CBE)', phoneNumber: '951', type: 'outgoing', timestamp: 'Today, 11:30 AM', simSlot: 2, duration: '45s' },
+  { id: 'log-3', phoneNumber: '0955678901', type: 'missed', timestamp: 'Yesterday, 6:45 PM', simSlot: 1 },
+  { id: 'log-4', contactName: 'Almaz Ayana', phoneNumber: '0922345678', type: 'outgoing', timestamp: 'Yesterday, 3:20 PM', simSlot: 1, duration: '5m 12s' },
+  { id: 'log-5', contactName: 'Ethio Telecom Customer Service', phoneNumber: '994', type: 'incoming', timestamp: 'Sep 14, 10:00 AM', simSlot: 2, duration: '1m 30s' }
+];
+
+const defaultSims: SimConfig[] = [
+  { id: 1, name: 'SIM 1', carrier: 'Ethio telecom', color: '#10B981', active: true },
+  { id: 2, name: 'SIM 2', carrier: 'Safaricom ET', color: '#3B82F6', active: true }
+];
+
+export function App() {
   const [contacts, setContacts] = useState<Contact[]>(() => {
     try {
-      const saved = localStorage.getItem('phone_app_contacts');
-      return saved ? JSON.parse(saved) : INITIAL_CONTACTS;
-    } catch {
-      return INITIAL_CONTACTS;
-    }
+      const s = localStorage.getItem('p_contacts');
+      return s ? JSON.parse(s) : initialContacts;
+    } catch { return initialContacts; }
   });
 
   const [callLogs, setCallLogs] = useState<CallLog[]>(() => {
     try {
-      const saved = localStorage.getItem('phone_app_call_logs');
-      return saved ? JSON.parse(saved) : INITIAL_CALL_LOGS;
-    } catch {
-      return INITIAL_CALL_LOGS;
-    }
+      const s = localStorage.getItem('p_logs');
+      return s ? JSON.parse(s) : initialCallLogs;
+    } catch { return initialCallLogs; }
   });
 
   const [sims, setSims] = useState<SimConfig[]>(() => {
     try {
-      const saved = localStorage.getItem('phone_app_sims');
-      return saved ? JSON.parse(saved) : INITIAL_SIMS;
-    } catch {
-      return INITIAL_SIMS;
-    }
+      const s = localStorage.getItem('p_sims');
+      return s ? JSON.parse(s) : defaultSims;
+    } catch { return defaultSims; }
   });
 
-  // Navigation & View tabs
-  const [currentTab, setCurrentTab] = useState<'home' | 'keypad'>('home');
   const [dialpadDigits, setDialpadDigits] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeFilter, setActiveFilter] = useState('All');
-
-  // Modals & Sheets
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [isContactsModalOpen, setIsContactsModalOpen] = useState(false);
-  const [isNewContactModalOpen, setIsNewContactModalOpen] = useState(false);
-  const [newContactInitialNumber, setNewContactInitialNumber] = useState('');
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
-
-  // Settings
-  const [showStatusBar, setShowStatusBar] = useState(true);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [vibrationEnabled, setVibrationEnabled] = useState(true);
-
-  // Active Calling
+  const [activeFilter, setActiveFilter] = useState<'All' | 'Missed'>('All');
+  const [activeTab, setActiveTab] = useState<'recents' | 'contacts'>('recents');
+  
+  const [isNewContactOpen, setIsNewContactOpen] = useState(false);
+  const [newContactName, setNewContactName] = useState('');
+  const [newContactPhone, setNewContactPhone] = useState('');
+  
   const [pendingCall, setPendingCall] = useState<{ number: string; name?: string } | null>(null);
   const [isSimDialogOpen, setIsSimDialogOpen] = useState(false);
   const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
-  const callTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<any>(null);
 
-  // Persist contacts, call logs, sims to localStorage
   useEffect(() => {
-    try {
-      localStorage.setItem('phone_app_contacts', JSON.stringify(contacts));
-    } catch {
-      // ignore
-    }
+    try { localStorage.setItem('p_contacts', JSON.stringify(contacts)); } catch {}
   }, [contacts]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('phone_app_call_logs', JSON.stringify(callLogs));
-    } catch {
-      // ignore
-    }
+    try { localStorage.setItem('p_logs', JSON.stringify(callLogs)); } catch {}
   }, [callLogs]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('phone_app_sims', JSON.stringify(sims));
-    } catch {
-      // ignore
-    }
-  }, [sims]);
-
-  // Active call duration timer
-  useEffect(() => {
     if (activeCall && activeCall.status === 'connected') {
-      callTimerRef.current = setInterval(() => {
-        setActiveCall((prev) => (prev ? { ...prev, seconds: prev.seconds + 1 } : null));
+      timerRef.current = setInterval(() => {
+        setActiveCall(prev => prev ? { ...prev, duration: prev.duration + 1 } : null);
       }, 1000);
     } else {
-      if (callTimerRef.current) {
-        clearInterval(callTimerRef.current);
-        callTimerRef.current = null;
-      }
+      if (timerRef.current) clearInterval(timerRef.current);
     }
-    return () => {
-      if (callTimerRef.current) {
-        clearInterval(callTimerRef.current);
-        callTimerRef.current = null;
-      }
-    };
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [activeCall?.status]);
 
-  // Handle Call Initiation (Opens SIM Dialog - Screenshot 3)
   const handleInitiateCall = (number: string, name?: string) => {
     if (!number.trim()) return;
-    setPendingCall({ number: number.trim(), name: name?.trim() });
-    setIsSimDialogOpen(true);
-  };
-
-  // Handle SIM Selection & Start Call
-  const handleSelectSim = (simId: number) => {
-    if (!pendingCall) return;
-    const selectedSim = sims.find((s) => s.id === simId) || sims[0];
-    setIsSimDialogOpen(false);
-
-    if (vibrationEnabled) triggerHaptic(25);
-
-    // Create call state
-    const newCall: ActiveCallState = {
-      number: pendingCall.number,
-      name: pendingCall.name,
-      carrier: selectedSim.name,
-      status: 'calling',
-      seconds: 0,
-      isMuted: false,
-      isSpeaker: false,
-      isRecording: true, // Auto-recording enabled as seen in screenshots with red dot
-      recordingSavedToast: false,
-      inCallKeypadOpen: false,
-      simId,
-    };
-    setActiveCall(newCall);
-
-    // Save outgoing call to call history
-    const newLog: CallLog = {
-      id: 'log_' + Date.now(),
-      number: pendingCall.number,
-      name: pendingCall.name,
-      direction: 'outgoing',
-      timestamp: 'Just now',
-      timeAgo: 'Just now',
-      dateGroup: 'Today',
-      carrier: selectedSim.name,
-      hasRecording: true,
-    };
-
-    setCallLogs((prev) => [newLog, ...prev]);
-
-    // Simulate connection after 1.8 seconds
-    setTimeout(() => {
-      setActiveCall((prev) => (prev ? { ...prev, status: 'connected' } : null));
-    }, 1800);
-
-    setPendingCall(null);
-  };
-
-  // Handle End Call
-  const handleEndCall = () => {
-    if (!activeCall) return;
-    if (soundEnabled) playEndCallTone();
-    if (vibrationEnabled) triggerHaptic(30);
-
-    const wasRecording = activeCall.isRecording;
-
-    if (wasRecording) {
-      // Show "Recording saved." toast for 2.5 seconds (Screenshot 8)
-      setActiveCall((prev) =>
-        prev ? { ...prev, recordingSavedToast: true, status: 'ended' } : null
-      );
-      setTimeout(() => {
-        setActiveCall(null);
-      }, 2400);
+    const activeSimsList = sims.filter(s => s.active);
+    if (activeSimsList.length > 1) {
+      setPendingCall({ number, name });
+      setIsSimDialogOpen(true);
     } else {
-      setActiveCall(null);
+      startCall(number, name, activeSimsList[0]?.id || 1);
     }
   };
 
-  // In-call toggles
-  const handleToggleMute = () => {
-    if (vibrationEnabled) triggerHaptic(15);
-    setActiveCall((prev) => (prev ? { ...prev, isMuted: !prev.isMuted } : null));
-  };
+  const startCall = (number: string, name: string | undefined, simId: 1 | 2) => {
+    setIsSimDialogOpen(false);
+    setPendingCall(null);
+    const found = contacts.find(c => c.phoneNumber.replace(/\s+/g, '') === number.replace(/\s+/g, ''));
+    const displayName = name || (found ? found.name : number);
 
-  const handleToggleSpeaker = () => {
-    if (vibrationEnabled) triggerHaptic(15);
-    setActiveCall((prev) => (prev ? { ...prev, isSpeaker: !prev.isSpeaker } : null));
-  };
-
-  const handleToggleRecord = () => {
-    if (vibrationEnabled) triggerHaptic(15);
-    setActiveCall((prev) => {
-      if (!prev) return null;
-      const willBeRecording = !prev.isRecording;
-      return {
-        ...prev,
-        isRecording: willBeRecording,
-        recordingSavedToast: !willBeRecording, // show toast when stopped
-      };
-    });
-
-    // Auto-dismiss toast
-    setTimeout(() => {
-      setActiveCall((prev) => (prev ? { ...prev, recordingSavedToast: false } : null));
-    }, 2400);
-  };
-
-  const handleToggleInCallKeypad = () => {
-    if (vibrationEnabled) triggerHaptic(15);
-    setActiveCall((prev) =>
-      prev ? { ...prev, inCallKeypadOpen: !prev.inCallKeypadOpen } : null
-    );
-  };
-
-  // Contacts management
-  const handleSaveNewContact = (newContact: Omit<Contact, 'id'>) => {
-    const contact: Contact = {
-      ...newContact,
-      id: 'c_' + Date.now(),
+    const newLog: CallLog = {
+      id: Date.now().toString(),
+      contactName: found ? found.name : undefined,
+      phoneNumber: number,
+      type: 'outgoing',
+      timestamp: 'Just now',
+      simSlot: simId,
+      duration: '0s'
     };
-    setContacts((prev) => [contact, ...prev]);
-  };
+    setCallLogs(prev => [newLog, ...prev]);
 
-  const handleDeleteContact = (id: string) => {
-    setContacts((prev) => prev.filter((c) => c.id !== id));
-  };
-
-  const handleDeleteLog = (id: string) => {
-    setCallLogs((prev) => prev.filter((l) => l.id !== id));
-  };
-
-  const handleClearCallHistory = () => {
-    if (confirm('Clear all call history?')) {
-      setCallLogs([]);
-    }
-  };
-
-  const handleResetData = () => {
-    setContacts(INITIAL_CONTACTS);
-    setCallLogs(INITIAL_CALL_LOGS);
-    setSims(INITIAL_SIMS);
-    localStorage.removeItem('phone_app_contacts');
-    localStorage.removeItem('phone_app_call_logs');
-    localStorage.removeItem('phone_app_sims');
-  };
-
-  const handleOpenCreateContactWithNumber = (num: string) => {
-    setNewContactInitialNumber(num);
-    setIsNewContactModalOpen(true);
-  };
-
-  // Filtered Call Logs
-  const filteredCallLogs = useMemo(() => {
-    return callLogs.filter((log) => {
-      // Filter by category chip
-      if (activeFilter === 'Missed' && log.direction !== 'missed') return false;
-      if (activeFilter === 'Contacts') {
-        const hasContact = contacts.some(
-          (c) => c.number === log.number || c.name === log.name
-        );
-        if (!hasContact) return false;
-      }
-      if (activeFilter === 'Spam') return false; // none by default
-
-      // Filter by search query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesNumber = log.number.includes(q);
-        const matchesName = log.name?.toLowerCase().includes(q);
-        if (!matchesNumber && !matchesName) return false;
-      }
-
-      return true;
+    setActiveCall({
+      contactName: displayName,
+      phoneNumber: number,
+      simSlot: simId,
+      status: 'connecting',
+      duration: 0,
+      isMuted: false,
+      isSpeakerOn: false,
+      isRecording: false,
+      isKeypadOpen: false
     });
-  }, [callLogs, contacts, activeFilter, searchQuery]);
+
+    setTimeout(() => {
+      setActiveCall(prev => prev ? { ...prev, status: 'ringing' } : null);
+    }, 1500);
+
+    setTimeout(() => {
+      setActiveCall(prev => prev ? { ...prev, status: 'connected' } : null);
+    }, 4000);
+  };
+
+  const handleEndCall = () => {
+    if (activeCall) {
+      const durSec = activeCall.duration;
+      const durStr = durSec > 60 ? `${Math.floor(durSec / 60)}m ${durSec % 60}s` : `${durSec}s`;
+      setCallLogs(prev => prev.map((l, i) => i === 0 ? { ...l, duration: durStr } : l));
+    }
+    setActiveCall(null);
+  };
+
+  const handleSaveContact = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newContactName.trim() || !newContactPhone.trim()) return;
+    const colors = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EC4899', '#06B6D4'];
+    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    const c: Contact = {
+      id: Date.now().toString(),
+      name: newContactName.trim(),
+      phoneNumber: newContactPhone.trim(),
+      avatarColor: randomColor
+    };
+    setContacts(prev => [...prev, c]);
+    setNewContactName('');
+    setNewContactPhone('');
+    setIsNewContactOpen(false);
+  };
+
+  const filteredLogs = useMemo(() => {
+    let list = callLogs;
+    if (activeFilter === 'Missed') list = list.filter(l => l.type === 'missed');
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(l => (l.contactName && l.contactName.toLowerCase().includes(q)) || l.phoneNumber.includes(q));
+    }
+    return list;
+  }, [callLogs, activeFilter, searchQuery]);
+
+  const filteredContacts = useMemo(() => {
+    if (!searchQuery.trim()) return contacts;
+    const q = searchQuery.toLowerCase();
+    return contacts.filter(c => c.name.toLowerCase().includes(q) || c.phoneNumber.includes(q));
+  }, [contacts, searchQuery]);
 
   return (
-    <div className="w-full min-h-screen bg-[#EAE8F2] flex items-center justify-center font-sans md:py-3 select-none">
-      {/* Phone container: full width/height in mobile & WebView, responsive frame on desktop */}
-      <div className="w-full h-full min-h-[100dvh] md:h-[92vh] md:max-w-[430px] md:rounded-[42px] bg-[#F2F1F6] flex flex-col justify-between relative overflow-hidden shadow-2xl md:border-[7px] md:border-[#222129]">
+    <div className="flex justify-center items-center min-h-screen bg-slate-950 font-sans p-0 sm:p-4 text-slate-800 select-none">
+      <div className="relative w-full max-w-[430px] h-[100dvh] sm:h-[880px] bg-[#f8f9fa] sm:rounded-[36px] shadow-2xl overflow-hidden flex flex-col border sm:border-slate-800">
         
-        {/* Status Bar (Toggleable for native Android WebView) */}
-        {showStatusBar && (
-          <StatusBar onToggleSettings={() => setIsSettingsModalOpen(true)} />
-        )}
+        {/* Status Bar */}
+        <div className="flex justify-between items-center px-6 py-2 bg-transparent text-xs font-semibold text-slate-700">
+          <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-bold">ETHIO</span>
+            <span className="text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded font-bold">SAFARI</span>
+            <span>4G</span>
+            <span>100%</span>
+          </div>
+        </div>
 
-        {/* Top Header with Search and Filter Chips (Visible on Home tab) */}
-        {currentTab === 'home' && (
-          <SearchHeader
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
-            activeFilter={activeFilter}
-            onSelectFilter={setActiveFilter}
-            onOpenDrawer={() => setIsDrawerOpen(true)}
-          />
-        )}
-
-        {/* Main Content View */}
-        <div className="flex-1 overflow-y-auto flex flex-col">
-          {currentTab === 'home' ? (
-            /* Home Tab: Recent Call History */
-            <CallHistoryList
-              callLogs={filteredCallLogs}
-              contacts={contacts}
-              onStartCall={handleInitiateCall}
-              onOpenContacts={() => setIsContactsModalOpen(true)}
-              onDeleteLog={handleDeleteLog}
-              onCreateContactFromNumber={handleOpenCreateContactWithNumber}
+        {/* Search Header */}
+        <div className="p-4 bg-white border-b border-slate-100 flex items-center gap-3">
+          <div className="flex-1 relative">
+            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+            <input 
+              type="text"
+              placeholder="Search contacts or numbers..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-slate-100 pl-9 pr-4 py-2 rounded-full text-sm outline-none focus:ring-2 focus:ring-emerald-500"
             />
+          </div>
+          <button 
+            onClick={() => setIsNewContactOpen(true)}
+            className="p-2 bg-emerald-50 text-emerald-600 rounded-full hover:bg-emerald-100 transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Main Content Area */}
+        <div className="flex-1 overflow-y-auto pb-44">
+          {activeTab === 'recents' ? (
+            <div>
+              {/* Filter Tabs */}
+              <div className="flex gap-2 p-3 bg-white border-b border-slate-50">
+                <button 
+                  onClick={() => setActiveFilter('All')}
+                  className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${activeFilter === 'All' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
+                >
+                  All Calls
+                </button>
+                <button 
+                  onClick={() => setActiveFilter('Missed')}
+                  className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${activeFilter === 'Missed' ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600'}`}
+                >
+                  Missed
+                </button>
+              </div>
+
+              {filteredLogs.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-sm">No call history</div>
+              ) : (
+                filteredLogs.map(log => (
+                  <div key={log.id} className="flex items-center justify-between p-4 hover:bg-slate-50 border-b border-slate-50">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-full bg-slate-100 text-slate-600">
+                        {log.type === 'incoming' && <PhoneIncoming className="w-4 h-4 text-emerald-600" />}
+                        {log.type === 'outgoing' && <PhoneOutgoing className="w-4 h-4 text-blue-600" />}
+                        {log.type === 'missed' && <PhoneMissed className="w-4 h-4 text-red-500" />}
+                      </div>
+                      <div>
+                        <p className={`text-sm font-semibold ${log.type === 'missed' ? 'text-red-500' : 'text-slate-800'}`}>
+                          {log.contactName || log.phoneNumber}
+                        </p>
+                        <p className="text-xs text-slate-400">{log.timestamp} • SIM {log.simSlot}</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => handleInitiateCall(log.phoneNumber, log.contactName)}
+                      className="p-2.5 bg-emerald-50 text-emerald-600 rounded-full hover:bg-emerald-100 transition-colors"
+                    >
+                      <Phone className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           ) : (
-            /* Keypad Tab: Suggested or Dialed display + Dialpad */
-            <DialpadSheet
-              digits={dialpadDigits}
-              onDigitsChange={setDialpadDigits}
-              contacts={contacts}
-              onInitiateCall={handleInitiateCall}
-              onCreateNewContact={handleOpenCreateContactWithNumber}
-              soundEnabled={soundEnabled}
-              vibrationEnabled={vibrationEnabled}
-            />
+            <div>
+              {filteredContacts.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-sm">No contacts found</div>
+              ) : (
+                filteredContacts.map(c => (
+                  <div key={c.id} className="flex items-center justify-between p-4 hover:bg-slate-50 border-b border-slate-50">
+                    <div className="flex items-center gap-3">
+                      <div 
+                        className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm"
+                        style={{ backgroundColor: c.avatarColor }}
+                      >
+                        {c.name.charAt(0)}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">{c.name}</p>
+                        <p className="text-xs text-slate-400">{c.phoneNumber}</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => handleInitiateCall(c.phoneNumber, c.name)}
+                      className="p-2.5 bg-emerald-50 text-emerald-600 rounded-full hover:bg-emerald-100 transition-colors"
+                    >
+                      <Phone className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           )}
         </div>
 
-        {/* Bottom Navigation Bar */}
-        <BottomNavBar
-          currentTab={currentTab}
-          onTabChange={(tab) => {
-            if (vibrationEnabled) triggerHaptic(10);
-            setCurrentTab(tab);
-          }}
-        />
+        {/* Dialpad Area */}
+        <div className="absolute bottom-16 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100 p-4 shadow-lg">
+          <div className="flex justify-between items-center mb-2 px-4">
+            <span className="text-lg font-bold text-slate-800 tracking-wider h-7">{dialpadDigits}</span>
+            {dialpadDigits && (
+              <button 
+                onClick={() => setDialpadDigits(prev => prev.slice(0, -1))}
+                className="text-xs text-slate-400 font-semibold hover:text-slate-600"
+              >
+                Delete
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-2 max-w-[280px] mx-auto">
+            {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(digit => (
+              <button 
+                key={digit}
+                onClick={() => setDialpadDigits(prev => prev + digit)}
+                className="h-10 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-base font-bold text-slate-700 transition-all shadow-sm"
+              >
+                {digit}
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-center mt-3">
+            <button 
+              onClick={() => {
+                if (dialpadDigits) handleInitiateCall(dialpadDigits);
+              }}
+              className="flex items-center gap-2 px-8 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full font-bold shadow-md shadow-emerald-500/30 active:scale-95 transition-all text-sm"
+            >
+              <PhoneCall className="w-4 h-4" /> Call
+            </button>
+          </div>
+        </div>
 
-        {/* Dual SIM Selector Dialog - Screenshot 3 */}
-        <SimSelectionDialog
-          isOpen={isSimDialogOpen}
-          onClose={() => setIsSimDialogOpen(false)}
-          onSelectSim={handleSelectSim}
-          sims={sims}
-          targetNumber={pendingCall?.number || ''}
-          targetName={pendingCall?.name}
-        />
+        {/* Bottom Navigation */}
+        <div className="absolute bottom-0 left-0 right-0 h-16 bg-white border-t border-slate-100 flex items-center justify-around z-10">
+          <button 
+            onClick={() => setActiveTab('recents')}
+            className={`flex flex-col items-center gap-1 ${activeTab === 'recents' ? 'text-emerald-600' : 'text-slate-400'}`}
+          >
+            <Clock className="w-5 h-5" />
+            <span className="text-[10px] font-semibold">Recents</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('contacts')}
+            className={`flex flex-col items-center gap-1 ${activeTab === 'contacts' ? 'text-emerald-600' : 'text-slate-400'}`}
+          >
+            <Users className="w-5 h-5" />
+            <span className="text-[10px] font-semibold">Contacts</span>
+          </button>
+        </div>
 
-        {/* Fullscreen In-Call View - Screenshots 4, 5, 6, 8 */}
-        {activeCall && (
-          <InCallScreen
-            call={activeCall}
-            onEndCall={handleEndCall}
-            onToggleMute={handleToggleMute}
-            onToggleSpeaker={handleToggleSpeaker}
-            onToggleRecord={handleToggleRecord}
-            onToggleInCallKeypad={handleToggleInCallKeypad}
-            soundEnabled={soundEnabled}
-            vibrationEnabled={vibrationEnabled}
-          />
+        {/* SIM Selection Dialog */}
+        {isSimDialogOpen && pendingCall && (
+          <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-[320px] shadow-2xl">
+              <h3 className="text-base font-bold text-slate-800 mb-1">Select SIM to Call</h3>
+              <p className="text-xs text-slate-500 mb-4">{pendingCall.name || pendingCall.number}</p>
+              <div className="flex flex-col gap-2.5">
+                {sims.filter(s => s.active).map(s => (
+                  <button 
+                    key={s.id}
+                    onClick={() => startCall(pendingCall.number, pendingCall.name, s.id)}
+                    className="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:border-emerald-500 hover:bg-emerald-50 transition-all"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />
+                      <div className="text-left">
+                        <p className="text-xs font-bold text-slate-800">{s.carrier}</p>
+                        <p className="text-[10px] text-slate-400">Slot {s.id}</p>
+                      </div>
+                    </div>
+                    <Phone className="w-4 h-4 text-slate-400" />
+                  </button>
+                ))}
+              </div>
+              <button 
+                onClick={() => { setIsSimDialogOpen(false); setPendingCall(null); }}
+                className="w-full mt-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-600"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         )}
 
-        {/* Navigation Drawer - Screenshot 10 */}
-        <NavigationDrawer
-          isOpen={isDrawerOpen}
-          onClose={() => setIsDrawerOpen(false)}
-          onOpenContacts={() => setIsContactsModalOpen(true)}
-          onOpenSettings={() => setIsSettingsModalOpen(true)}
-          onClearCallHistory={handleClearCallHistory}
-          onOpenHelp={() => setIsHelpModalOpen(true)}
-        />
+        {/* Active In-Call Screen */}
+        {activeCall && (
+          <div className="absolute inset-0 bg-slate-900 text-white z-50 flex flex-col justify-between p-8">
+            <div className="text-center pt-8">
+              <p className="text-xs font-semibold text-emerald-400 mb-1">
+                {activeCall.status === 'connecting' && 'Connecting...'}
+                {activeCall.status === 'ringing' && 'Ringing...'}
+                {activeCall.status === 'connected' && `${Math.floor(activeCall.duration / 60)}:${(activeCall.duration % 60).toString().padStart(2, '0')}`}
+              </p>
+              <h2 className="text-2xl font-bold mb-1">{activeCall.contactName || activeCall.phoneNumber}</h2>
+              <p className="text-xs text-slate-400">{activeCall.phoneNumber} • SIM {activeCall.simSlot}</p>
+            </div>
 
-        {/* New Contact Creation Modal */}
-        <NewContactModal
-          isOpen={isNewContactModalOpen}
-          initialNumber={newContactInitialNumber}
-          onClose={() => {
-            setIsNewContactModalOpen(false);
-            setNewContactInitialNumber('');
-          }}
-          onSave={handleSaveNewContact}
-        />
+            <div className="grid grid-cols-3 gap-6 max-w-[260px] mx-auto">
+              <button 
+                onClick={() => setActiveCall(p => p ? { ...p, isMuted: !p.isMuted } : null)}
+                className={`p-4 rounded-full flex flex-col items-center gap-1 ${activeCall.isMuted ? 'bg-white text-slate-900' : 'bg-slate-800 text-white'}`}
+              >
+                {activeCall.isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
+                <span className="text-[10px]">Mute</span>
+              </button>
+              <button 
+                onClick={() => setActiveCall(p => p ? { ...p, isSpeakerOn: !p.isSpeakerOn } : null)}
+                className={`p-4 rounded-full flex flex-col items-center gap-1 ${activeCall.isSpeakerOn ? 'bg-white text-slate-900' : 'bg-slate-800 text-white'}`}
+              >
+                {activeCall.isSpeakerOn ? <Volume2 className="w-6 h-6 text-emerald-600" /> : <VolumeX className="w-6 h-6" />}
+                <span className="text-[10px]">Speaker</span>
+              </button>
+              <button 
+                onClick={() => setActiveCall(p => p ? { ...p, isRecording: !p.isRecording } : null)}
+                className={`p-4 rounded-full flex flex-col items-center gap-1 ${activeCall.isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-800 text-white'}`}
+              >
+                <Disc className="w-6 h-6" />
+                <span className="text-[10px]">Record</span>
+              </button>
+            </div>
 
-        {/* Contacts Explorer Modal */}
-        <ContactsModal
-          isOpen={isContactsModalOpen}
-          onClose={() => setIsContactsModalOpen(false)}
-          contacts={contacts}
-          onStartCall={handleInitiateCall}
-          onOpenCreateContact={() => {
-            setNewContactInitialNumber('');
-            setIsNewContactModalOpen(true);
-          }}
-          onDeleteContact={handleDeleteContact}
-        />
+            <div className="flex justify-center pb-6">
+              <button 
+                onClick={handleEndCall}
+                className="w-16 h-16 bg-red-600 rounded-full flex items-center justify-center text-white shadow-xl hover:bg-red-700 active:scale-95 transition-all"
+              >
+                <Phone className="w-8 h-8 rotate-[135deg]" />
+              </button>
+            </div>
+          </div>
+        )}
 
-        {/* Settings Modal */}
-        <SettingsModal
-          isOpen={isSettingsModalOpen}
-          onClose={() => setIsSettingsModalOpen(false)}
-          showStatusBar={showStatusBar}
-          onToggleStatusBar={setShowStatusBar}
-          soundEnabled={soundEnabled}
-          onToggleSound={setSoundEnabled}
-          vibrationEnabled={vibrationEnabled}
-          onToggleVibration={setVibrationEnabled}
-          sims={sims}
-          onUpdateSims={setSims}
-          onResetData={handleResetData}
-        />
+        {/* Add Contact Modal */}
+        {isNewContactOpen && (
+          <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <form onSubmit={handleSaveContact} className="bg-white rounded-2xl p-6 w-full max-w-[320px] shadow-2xl">
+              <h3 className="text-base font-bold text-slate-800 mb-4">Add Contact</h3>
+              <input 
+                type="text" 
+                placeholder="Full Name" 
+                value={newContactName}
+                onChange={e => setNewContactName(e.target.value)}
+                required
+                className="w-full p-2.5 mb-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-emerald-500"
+              />
+              <input 
+                type="tel" 
+                placeholder="Phone Number" 
+                value={newContactPhone}
+                onChange={e => setNewContactPhone(e.target.value)}
+                required
+                className="w-full p-2.5 mb-4 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-emerald-500"
+              />
+              <div className="flex gap-2">
+                <button 
+                  type="button"
+                  onClick={() => setIsNewContactOpen(false)}
+                  className="flex-1 py-2 text-xs font-semibold text-slate-500 bg-slate-100 rounded-xl hover:bg-slate-200"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 shadow-sm"
+                >
+                  Save
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
 
-        {/* Help & Android WebView / Vercel Guidance Modal */}
-        <HelpModal
-          isOpen={isHelpModalOpen}
-          onClose={() => setIsHelpModalOpen(false)}
-        />
       </div>
     </div>
   );
 }
+
+export default App;
