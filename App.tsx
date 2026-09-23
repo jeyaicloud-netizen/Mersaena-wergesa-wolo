@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Phone, PhoneCall, PhoneIncoming, PhoneOutgoing, PhoneMissed, 
-  User, Users, Clock, Search, Plus, Trash2, Settings, HelpCircle, 
-  Menu, X, Mic, MicOff, Volume2, VolumeX, Disc, Keypad, 
-  ArrowLeft, Check, Sparkles, AlertCircle, Info, RefreshCw
+  Users, Clock, Search, Plus, 
+  Mic, MicOff, Volume2, VolumeX, Disc, Delete
 } from 'lucide-react';
 
 interface Contact {
@@ -12,7 +11,6 @@ interface Contact {
   phoneNumber: string;
   avatarColor: string;
   category?: 'Family' | 'Work' | 'Friends' | 'Services';
-  isStarred?: boolean;
 }
 
 interface CallLog {
@@ -42,14 +40,94 @@ interface ActiveCallState {
   isMuted: boolean;
   isSpeakerOn: boolean;
   isRecording: boolean;
-  isKeypadOpen: boolean;
+}
+
+const DTMF_FREQS: Record<string, [number, number]> = {
+  '1': [697, 1209],
+  '2': [697, 1336],
+  '3': [697, 1477],
+  '4': [770, 1209],
+  '5': [770, 1336],
+  '6': [770, 1477],
+  '7': [852, 1209],
+  '8': [852, 1336],
+  '9': [852, 1477],
+  '*': [941, 1209],
+  '0': [941, 1336],
+  '#': [941, 1477]
+};
+
+let audioCtx: AudioContext | null = null;
+function getAudioContext(): AudioContext {
+  if (!audioCtx) {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    audioCtx = new AudioContextClass();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+function playDtmfTone(digit: string, duration = 0.12) {
+  try {
+    const freqs = DTMF_FREQS[digit];
+    if (!freqs) return;
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    osc1.frequency.setValueAtTime(freqs[0], now);
+    osc2.frequency.setValueAtTime(freqs[1], now);
+
+    gainNode.gain.setValueAtTime(0.18, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    osc1.connect(gainNode);
+    osc2.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + duration);
+    osc2.stop(now + duration);
+  } catch {}
+}
+
+function playRingtone() {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc1.frequency.setValueAtTime(440, now);
+    osc2.frequency.setValueAtTime(480, now);
+
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.setValueAtTime(0.15, now + 1.2);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc1.start(now);
+    osc2.start(now);
+    osc1.stop(now + 1.5);
+    osc2.stop(now + 1.5);
+  } catch {}
 }
 
 const initialContacts: Contact[] = [
-  { id: '1', name: 'Abebe Bikila', phoneNumber: '0911234567', avatarColor: '#10B981', category: 'Family', isStarred: true },
-  { id: '2', name: 'Almaz Ayana', phoneNumber: '0922345678', avatarColor: '#3B82F6', category: 'Friends', isStarred: true },
+  { id: '1', name: 'Abebe Bikila', phoneNumber: '0911234567', avatarColor: '#10B981', category: 'Family' },
+  { id: '2', name: 'Almaz Ayana', phoneNumber: '0922345678', avatarColor: '#3B82F6', category: 'Friends' },
   { id: '3', name: 'Ethio Telecom Customer Service', phoneNumber: '994', avatarColor: '#F59E0B', category: 'Services' },
-  { id: '4', name: 'Commercial Bank of Ethiopia (CBE)', phoneNumber: '951', avatarColor: '#8B5CF6', category: 'Services', isStarred: true },
+  { id: '4', name: 'Commercial Bank of Ethiopia (CBE)', phoneNumber: '951', avatarColor: '#8B5CF6', category: 'Services' },
   { id: '5', name: 'Chala Regassa', phoneNumber: '0933456789', avatarColor: '#EC4899', category: 'Work' },
   { id: '6', name: 'Dr. Bethlehem', phoneNumber: '0944567890', avatarColor: '#06B6D4', category: 'Work' },
   { id: '7', name: 'Federal Police Hotline', phoneNumber: '991', avatarColor: '#EF4444', category: 'Services' }
@@ -71,25 +149,19 @@ const defaultSims: SimConfig[] = [
 export function App() {
   const [contacts, setContacts] = useState<Contact[]>(() => {
     try {
-      const s = localStorage.getItem('p_contacts');
+      const s = localStorage.getItem('phone_contacts_v2');
       return s ? JSON.parse(s) : initialContacts;
     } catch { return initialContacts; }
   });
 
   const [callLogs, setCallLogs] = useState<CallLog[]>(() => {
     try {
-      const s = localStorage.getItem('p_logs');
+      const s = localStorage.getItem('phone_logs_v2');
       return s ? JSON.parse(s) : initialCallLogs;
     } catch { return initialCallLogs; }
   });
 
-  const [sims, setSims] = useState<SimConfig[]>(() => {
-    try {
-      const s = localStorage.getItem('p_sims');
-      return s ? JSON.parse(s) : defaultSims;
-    } catch { return defaultSims; }
-  });
-
+  const [sims] = useState<SimConfig[]>(defaultSims);
   const [dialpadDigits, setDialpadDigits] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<'All' | 'Missed'>('All');
@@ -103,14 +175,29 @@ export function App() {
   const [isSimDialogOpen, setIsSimDialogOpen] = useState(false);
   const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
   const timerRef = useRef<any>(null);
+  const ringtoneIntervalRef = useRef<any>(null);
 
   useEffect(() => {
-    try { localStorage.setItem('p_contacts', JSON.stringify(contacts)); } catch {}
+    try { localStorage.setItem('phone_contacts_v2', JSON.stringify(contacts)); } catch {}
   }, [contacts]);
 
   useEffect(() => {
-    try { localStorage.setItem('p_logs', JSON.stringify(callLogs)); } catch {}
+    try { localStorage.setItem('phone_logs_v2', JSON.stringify(callLogs)); } catch {}
   }, [callLogs]);
+
+  useEffect(() => {
+    if (activeCall && activeCall.status === 'ringing') {
+      playRingtone();
+      ringtoneIntervalRef.current = setInterval(() => {
+        playRingtone();
+      }, 3000);
+    } else {
+      if (ringtoneIntervalRef.current) clearInterval(ringtoneIntervalRef.current);
+    }
+    return () => {
+      if (ringtoneIntervalRef.current) clearInterval(ringtoneIntervalRef.current);
+    };
+  }, [activeCall?.status]);
 
   useEffect(() => {
     if (activeCall && activeCall.status === 'connected') {
@@ -123,8 +210,14 @@ export function App() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [activeCall?.status]);
 
+  const handleKeyPress = (digit: string) => {
+    playDtmfTone(digit);
+    setDialpadDigits(prev => prev + digit);
+  };
+
   const handleInitiateCall = (number: string, name?: string) => {
     if (!number.trim()) return;
+    playDtmfTone('5');
     const activeSimsList = sims.filter(s => s.active);
     if (activeSimsList.length > 1) {
       setPendingCall({ number, name });
@@ -159,20 +252,20 @@ export function App() {
       duration: 0,
       isMuted: false,
       isSpeakerOn: false,
-      isRecording: false,
-      isKeypadOpen: false
+      isRecording: false
     });
 
     setTimeout(() => {
       setActiveCall(prev => prev ? { ...prev, status: 'ringing' } : null);
-    }, 1500);
+    }, 1200);
 
     setTimeout(() => {
       setActiveCall(prev => prev ? { ...prev, status: 'connected' } : null);
-    }, 4000);
+    }, 4500);
   };
 
   const handleEndCall = () => {
+    playDtmfTone('#', 0.2);
     if (activeCall) {
       const durSec = activeCall.duration;
       const durStr = durSec > 60 ? `${Math.floor(durSec / 60)}m ${durSec % 60}s` : `${durSec}s`;
@@ -215,297 +308,301 @@ export function App() {
   }, [contacts, searchQuery]);
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-slate-950 font-sans p-0 sm:p-4 text-slate-800 select-none">
-      <div className="relative w-full max-w-[430px] h-[100dvh] sm:h-[880px] bg-[#f8f9fa] sm:rounded-[36px] shadow-2xl overflow-hidden flex flex-col border sm:border-slate-800">
-        
-        {/* Status Bar */}
-        <div className="flex justify-between items-center px-6 py-2 bg-transparent text-xs font-semibold text-slate-700">
-          <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] bg-emerald-600 text-white px-1.5 py-0.5 rounded font-bold">ETHIO</span>
-            <span className="text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded font-bold">SAFARI</span>
-            <span>4G</span>
-            <span>100%</span>
-          </div>
+    <div className="w-full h-[100dvh] bg-[#f8f9fa] flex flex-col font-sans text-slate-800 overflow-hidden select-none">
+      
+      {/* Top Mobile Status Header */}
+      <div className="flex justify-between items-center px-4 py-2 bg-white border-b border-slate-100 text-xs font-semibold">
+        <span className="text-slate-600 font-bold">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded font-bold">ETHIO</span>
+          <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded font-bold">SAFARICOM</span>
+          <span className="text-slate-500 font-bold">4G</span>
         </div>
+      </div>
 
-        {/* Search Header */}
-        <div className="p-4 bg-white border-b border-slate-100 flex items-center gap-3">
-          <div className="flex-1 relative">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
-            <input 
-              type="text"
-              placeholder="Search contacts or numbers..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-100 pl-9 pr-4 py-2 rounded-full text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
-          <button 
-            onClick={() => setIsNewContactOpen(true)}
-            className="p-2 bg-emerald-50 text-emerald-600 rounded-full hover:bg-emerald-100 transition-colors"
-          >
-            <Plus className="w-5 h-5" />
-          </button>
+      {/* Search Header */}
+      <div className="p-3 bg-white border-b border-slate-100 flex items-center gap-2">
+        <div className="flex-1 relative">
+          <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+          <input 
+            type="text"
+            placeholder="Search contacts or numbers..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full bg-slate-100 pl-9 pr-4 py-1.5 rounded-full text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+          />
         </div>
+        <button 
+          onClick={() => {
+            setNewContactPhone(dialpadDigits);
+            setIsNewContactOpen(true);
+          }}
+          className="p-2 bg-emerald-50 text-emerald-600 rounded-full hover:bg-emerald-100"
+        >
+          <Plus className="w-5 h-5" />
+        </button>
+      </div>
 
-        {/* Main Content Area */}
-        <div className="flex-1 overflow-y-auto pb-44">
-          {activeTab === 'recents' ? (
-            <div>
-              {/* Filter Tabs */}
-              <div className="flex gap-2 p-3 bg-white border-b border-slate-50">
-                <button 
-                  onClick={() => setActiveFilter('All')}
-                  className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${activeFilter === 'All' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
-                >
-                  All Calls
-                </button>
-                <button 
-                  onClick={() => setActiveFilter('Missed')}
-                  className={`px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${activeFilter === 'Missed' ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600'}`}
-                >
-                  Missed
-                </button>
-              </div>
+      {/* Scrollable List Area */}
+      <div className="flex-1 overflow-y-auto pb-64">
+        {activeTab === 'recents' ? (
+          <div>
+            <div className="flex gap-2 p-2 bg-white border-b border-slate-50">
+              <button 
+                onClick={() => setActiveFilter('All')}
+                className={`px-4 py-1 rounded-full text-xs font-medium ${activeFilter === 'All' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
+              >
+                All Calls
+              </button>
+              <button 
+                onClick={() => setActiveFilter('Missed')}
+                className={`px-4 py-1 rounded-full text-xs font-medium ${activeFilter === 'Missed' ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600'}`}
+              >
+                Missed
+              </button>
+            </div>
 
-              {filteredLogs.length === 0 ? (
-                <div className="p-8 text-center text-slate-400 text-sm">No call history</div>
-              ) : (
-                filteredLogs.map(log => (
-                  <div key={log.id} className="flex items-center justify-between p-4 hover:bg-slate-50 border-b border-slate-50">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 rounded-full bg-slate-100 text-slate-600">
-                        {log.type === 'incoming' && <PhoneIncoming className="w-4 h-4 text-emerald-600" />}
-                        {log.type === 'outgoing' && <PhoneOutgoing className="w-4 h-4 text-blue-600" />}
-                        {log.type === 'missed' && <PhoneMissed className="w-4 h-4 text-red-500" />}
-                      </div>
-                      <div>
-                        <p className={`text-sm font-semibold ${log.type === 'missed' ? 'text-red-500' : 'text-slate-800'}`}>
-                          {log.contactName || log.phoneNumber}
-                        </p>
-                        <p className="text-xs text-slate-400">{log.timestamp} • SIM {log.simSlot}</p>
-                      </div>
+            {filteredLogs.length === 0 ? (
+              <div className="p-10 text-center text-slate-400 text-sm">No recent calls</div>
+            ) : (
+              filteredLogs.map(log => (
+                <div key={log.id} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-full bg-slate-100 text-slate-600">
+                      {log.type === 'incoming' && <PhoneIncoming className="w-4 h-4 text-emerald-600" />}
+                      {log.type === 'outgoing' && <PhoneOutgoing className="w-4 h-4 text-blue-600" />}
+                      {log.type === 'missed' && <PhoneMissed className="w-4 h-4 text-red-500" />}
                     </div>
-                    <button 
-                      onClick={() => handleInitiateCall(log.phoneNumber, log.contactName)}
-                      className="p-2.5 bg-emerald-50 text-emerald-600 rounded-full hover:bg-emerald-100 transition-colors"
-                    >
-                      <Phone className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          ) : (
-            <div>
-              {filteredContacts.length === 0 ? (
-                <div className="p-8 text-center text-slate-400 text-sm">No contacts found</div>
-              ) : (
-                filteredContacts.map(c => (
-                  <div key={c.id} className="flex items-center justify-between p-4 hover:bg-slate-50 border-b border-slate-50">
-                    <div className="flex items-center gap-3">
-                      <div 
-                        className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-sm"
-                        style={{ backgroundColor: c.avatarColor }}
-                      >
-                        {c.name.charAt(0)}
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-slate-800">{c.name}</p>
-                        <p className="text-xs text-slate-400">{c.phoneNumber}</p>
-                      </div>
+                    <div>
+                      <p className={`text-sm font-semibold ${log.type === 'missed' ? 'text-red-500' : 'text-slate-800'}`}>
+                        {log.contactName || log.phoneNumber}
+                      </p>
+                      <p className="text-[11px] text-slate-400">{log.timestamp} • SIM {log.simSlot}</p>
                     </div>
-                    <button 
-                      onClick={() => handleInitiateCall(c.phoneNumber, c.name)}
-                      className="p-2.5 bg-emerald-50 text-emerald-600 rounded-full hover:bg-emerald-100 transition-colors"
-                    >
-                      <Phone className="w-4 h-4" />
-                    </button>
                   </div>
-                ))
-              )}
-            </div>
+                  <button 
+                    onClick={() => handleInitiateCall(log.phoneNumber, log.contactName)}
+                    className="p-2.5 bg-emerald-50 text-emerald-600 rounded-full active:scale-95"
+                  >
+                    <Phone className="w-4 h-4" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        ) : (
+          <div>
+            {filteredContacts.length === 0 ? (
+              <div className="p-10 text-center text-slate-400 text-sm">No contacts</div>
+            ) : (
+              filteredContacts.map(c => (
+                <div key={c.id} className="flex items-center justify-between px-4 py-3 hover:bg-slate-50 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div 
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
+                      style={{ backgroundColor: c.avatarColor }}
+                    >
+                      {c.name.charAt(0)}
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{c.name}</p>
+                      <p className="text-xs text-slate-400">{c.phoneNumber}</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => handleInitiateCall(c.phoneNumber, c.name)}
+                    className="p-2.5 bg-emerald-50 text-emerald-600 rounded-full active:scale-95"
+                  >
+                    <Phone className="w-4 h-4" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Dialpad Area at Bottom */}
+      <div className="fixed bottom-14 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 pt-2 pb-3 shadow-lg z-20">
+        <div className="flex justify-between items-center mb-1 px-4">
+          <span className="text-xl font-bold text-slate-800 tracking-wider h-7">{dialpadDigits}</span>
+          {dialpadDigits && (
+            <button 
+              onClick={() => {
+                playDtmfTone('0');
+                setDialpadDigits(prev => prev.slice(0, -1));
+              }}
+              className="p-1 text-slate-400 hover:text-slate-700"
+            >
+              <Delete className="w-5 h-5" />
+            </button>
           )}
         </div>
 
-        {/* Dialpad Area */}
-        <div className="absolute bottom-16 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100 p-4 shadow-lg">
-          <div className="flex justify-between items-center mb-2 px-4">
-            <span className="text-lg font-bold text-slate-800 tracking-wider h-7">{dialpadDigits}</span>
-            {dialpadDigits && (
-              <button 
-                onClick={() => setDialpadDigits(prev => prev.slice(0, -1))}
-                className="text-xs text-slate-400 font-semibold hover:text-slate-600"
-              >
-                Delete
-              </button>
-            )}
-          </div>
-          <div className="grid grid-cols-3 gap-2 max-w-[280px] mx-auto">
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(digit => (
-              <button 
-                key={digit}
-                onClick={() => setDialpadDigits(prev => prev + digit)}
-                className="h-10 rounded-xl bg-slate-50 hover:bg-slate-100 active:scale-95 text-base font-bold text-slate-700 transition-all shadow-sm"
-              >
-                {digit}
-              </button>
-            ))}
-          </div>
-          <div className="flex justify-center mt-3">
+        <div className="grid grid-cols-3 gap-1.5 max-w-[280px] mx-auto">
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map(digit => (
             <button 
-              onClick={() => {
-                if (dialpadDigits) handleInitiateCall(dialpadDigits);
-              }}
-              className="flex items-center gap-2 px-8 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full font-bold shadow-md shadow-emerald-500/30 active:scale-95 transition-all text-sm"
+              key={digit}
+              onClick={() => handleKeyPress(digit)}
+              className="h-10 rounded-xl bg-slate-50 hover:bg-slate-100 active:bg-slate-200 active:scale-95 text-base font-bold text-slate-700 shadow-sm"
             >
-              <PhoneCall className="w-4 h-4" /> Call
+              {digit}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex justify-center mt-2">
+          <button 
+            onClick={() => {
+              if (dialpadDigits) handleInitiateCall(dialpadDigits);
+            }}
+            className="flex items-center gap-2 px-8 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full font-bold shadow-md shadow-emerald-500/30 active:scale-95 text-sm"
+          >
+            <PhoneCall className="w-4 h-4" /> Call
+          </button>
+        </div>
+      </div>
+
+      {/* Bottom Bar Navigation */}
+      <div className="fixed bottom-0 left-0 right-0 h-14 bg-white border-t border-slate-200 flex items-center justify-around z-30">
+        <button 
+          onClick={() => setActiveTab('recents')}
+          className={`flex flex-col items-center gap-0.5 ${activeTab === 'recents' ? 'text-emerald-600' : 'text-slate-400'}`}
+        >
+          <Clock className="w-5 h-5" />
+          <span className="text-[10px] font-bold">Recents</span>
+        </button>
+        <button 
+          onClick={() => setActiveTab('contacts')}
+          className={`flex flex-col items-center gap-0.5 ${activeTab === 'contacts' ? 'text-emerald-600' : 'text-slate-400'}`}
+        >
+          <Users className="w-5 h-5" />
+          <span className="text-[10px] font-bold">Contacts</span>
+        </button>
+      </div>
+
+      {/* SIM Selector Dialog */}
+      {isSimDialogOpen && pendingCall && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-5 w-full max-w-[300px] shadow-2xl">
+            <h3 className="text-base font-bold text-slate-800 mb-1">Select SIM to Call</h3>
+            <p className="text-xs text-slate-500 mb-4">{pendingCall.name || pendingCall.number}</p>
+            <div className="flex flex-col gap-2">
+              {sims.filter(s => s.active).map(s => (
+                <button 
+                  key={s.id}
+                  onClick={() => startCall(pendingCall.number, pendingCall.name, s.id)}
+                  className="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:border-emerald-500 hover:bg-emerald-50"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />
+                    <div className="text-left">
+                      <p className="text-xs font-bold text-slate-800">{s.carrier}</p>
+                      <p className="text-[10px] text-slate-400">Slot {s.id}</p>
+                    </div>
+                  </div>
+                  <Phone className="w-4 h-4 text-slate-400" />
+                </button>
+              ))}
+            </div>
+            <button 
+              onClick={() => { setIsSimDialogOpen(false); setPendingCall(null); }}
+              className="w-full mt-3 py-2 text-xs font-semibold text-slate-400"
+            >
+              Cancel
             </button>
           </div>
         </div>
+      )}
 
-        {/* Bottom Navigation */}
-        <div className="absolute bottom-0 left-0 right-0 h-16 bg-white border-t border-slate-100 flex items-center justify-around z-10">
-          <button 
-            onClick={() => setActiveTab('recents')}
-            className={`flex flex-col items-center gap-1 ${activeTab === 'recents' ? 'text-emerald-600' : 'text-slate-400'}`}
-          >
-            <Clock className="w-5 h-5" />
-            <span className="text-[10px] font-semibold">Recents</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab('contacts')}
-            className={`flex flex-col items-center gap-1 ${activeTab === 'contacts' ? 'text-emerald-600' : 'text-slate-400'}`}
-          >
-            <Users className="w-5 h-5" />
-            <span className="text-[10px] font-semibold">Contacts</span>
-          </button>
+      {/* Active In-Call Screen */}
+      {activeCall && (
+        <div className="fixed inset-0 bg-slate-900 text-white z-50 flex flex-col justify-between p-6">
+          <div className="text-center pt-8">
+            <p className="text-xs font-semibold text-emerald-400 mb-1">
+              {activeCall.status === 'connecting' && 'Connecting...'}
+              {activeCall.status === 'ringing' && 'Ringing...'}
+              {activeCall.status === 'connected' && `${Math.floor(activeCall.duration / 60)}:${(activeCall.duration % 60).toString().padStart(2, '0')}`}
+            </p>
+            <h2 className="text-2xl font-bold mb-1">{activeCall.contactName || activeCall.phoneNumber}</h2>
+            <p className="text-xs text-slate-400">{activeCall.phoneNumber} • SIM {activeCall.simSlot}</p>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4 max-w-[260px] mx-auto">
+            <button 
+              onClick={() => setActiveCall(p => p ? { ...p, isMuted: !p.isMuted } : null)}
+              className={`p-3.5 rounded-full flex flex-col items-center gap-1 ${activeCall.isMuted ? 'bg-white text-slate-900' : 'bg-slate-800 text-white'}`}
+            >
+              {activeCall.isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+              <span className="text-[10px]">Mute</span>
+            </button>
+            <button 
+              onClick={() => setActiveCall(p => p ? { ...p, isSpeakerOn: !p.isSpeakerOn } : null)}
+              className={`p-3.5 rounded-full flex flex-col items-center gap-1 ${activeCall.isSpeakerOn ? 'bg-white text-slate-900' : 'bg-slate-800 text-white'}`}
+            >
+              <Volume2 className="w-5 h-5" />
+              <span className="text-[10px]">Speaker</span>
+            </button>
+            <button 
+              onClick={() => setActiveCall(p => p ? { ...p, isRecording: !p.isRecording } : null)}
+              className={`p-3.5 rounded-full flex flex-col items-center gap-1 ${activeCall.isRecording ? 'bg-red-500 text-white' : 'bg-slate-800 text-white'}`}
+            >
+              <Disc className="w-5 h-5" />
+              <span className="text-[10px]">Record</span>
+            </button>
+          </div>
+
+          <div className="flex justify-center pb-8">
+            <button 
+              onClick={handleEndCall}
+              className="w-16 h-16 bg-red-600 rounded-full flex items-center justify-center text-white shadow-xl active:scale-95"
+            >
+              <Phone className="w-8 h-8 rotate-[135deg]" />
+            </button>
+          </div>
         </div>
+      )}
 
-        {/* SIM Selection Dialog */}
-        {isSimDialogOpen && pendingCall && (
-          <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl p-6 w-full max-w-[320px] shadow-2xl">
-              <h3 className="text-base font-bold text-slate-800 mb-1">Select SIM to Call</h3>
-              <p className="text-xs text-slate-500 mb-4">{pendingCall.name || pendingCall.number}</p>
-              <div className="flex flex-col gap-2.5">
-                {sims.filter(s => s.active).map(s => (
-                  <button 
-                    key={s.id}
-                    onClick={() => startCall(pendingCall.number, pendingCall.name, s.id)}
-                    className="flex items-center justify-between p-3 rounded-xl border border-slate-100 hover:border-emerald-500 hover:bg-emerald-50 transition-all"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color }} />
-                      <div className="text-left">
-                        <p className="text-xs font-bold text-slate-800">{s.carrier}</p>
-                        <p className="text-[10px] text-slate-400">Slot {s.id}</p>
-                      </div>
-                    </div>
-                    <Phone className="w-4 h-4 text-slate-400" />
-                  </button>
-                ))}
-              </div>
+      {/* Add Contact Modal */}
+      {isNewContactOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <form onSubmit={handleSaveContact} className="bg-white rounded-2xl p-5 w-full max-w-[300px] shadow-2xl">
+            <h3 className="text-base font-bold text-slate-800 mb-3">Add Contact</h3>
+            <input 
+              type="text" 
+              placeholder="Name" 
+              value={newContactName}
+              onChange={e => setNewContactName(e.target.value)}
+              required
+              className="w-full p-2 mb-2 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none"
+            />
+            <input 
+              type="tel" 
+              placeholder="Number" 
+              value={newContactPhone}
+              onChange={e => setNewContactPhone(e.target.value)}
+              required
+              className="w-full p-2 mb-4 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none"
+            />
+            <div className="flex gap-2">
               <button 
-                onClick={() => { setIsSimDialogOpen(false); setPendingCall(null); }}
-                className="w-full mt-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-600"
+                type="button"
+                onClick={() => setIsNewContactOpen(false)}
+                className="flex-1 py-1.5 text-xs font-semibold text-slate-500 bg-slate-100 rounded-xl"
               >
                 Cancel
               </button>
-            </div>
-          </div>
-        )}
-
-        {/* Active In-Call Screen */}
-        {activeCall && (
-          <div className="absolute inset-0 bg-slate-900 text-white z-50 flex flex-col justify-between p-8">
-            <div className="text-center pt-8">
-              <p className="text-xs font-semibold text-emerald-400 mb-1">
-                {activeCall.status === 'connecting' && 'Connecting...'}
-                {activeCall.status === 'ringing' && 'Ringing...'}
-                {activeCall.status === 'connected' && `${Math.floor(activeCall.duration / 60)}:${(activeCall.duration % 60).toString().padStart(2, '0')}`}
-              </p>
-              <h2 className="text-2xl font-bold mb-1">{activeCall.contactName || activeCall.phoneNumber}</h2>
-              <p className="text-xs text-slate-400">{activeCall.phoneNumber} • SIM {activeCall.simSlot}</p>
-            </div>
-
-            <div className="grid grid-cols-3 gap-6 max-w-[260px] mx-auto">
               <button 
-                onClick={() => setActiveCall(p => p ? { ...p, isMuted: !p.isMuted } : null)}
-                className={`p-4 rounded-full flex flex-col items-center gap-1 ${activeCall.isMuted ? 'bg-white text-slate-900' : 'bg-slate-800 text-white'}`}
+                type="submit"
+                className="flex-1 py-1.5 text-xs font-bold text-white bg-emerald-600 rounded-xl"
               >
-                {activeCall.isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
-                <span className="text-[10px]">Mute</span>
-              </button>
-              <button 
-                onClick={() => setActiveCall(p => p ? { ...p, isSpeakerOn: !p.isSpeakerOn } : null)}
-                className={`p-4 rounded-full flex flex-col items-center gap-1 ${activeCall.isSpeakerOn ? 'bg-white text-slate-900' : 'bg-slate-800 text-white'}`}
-              >
-                {activeCall.isSpeakerOn ? <Volume2 className="w-6 h-6 text-emerald-600" /> : <VolumeX className="w-6 h-6" />}
-                <span className="text-[10px]">Speaker</span>
-              </button>
-              <button 
-                onClick={() => setActiveCall(p => p ? { ...p, isRecording: !p.isRecording } : null)}
-                className={`p-4 rounded-full flex flex-col items-center gap-1 ${activeCall.isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-800 text-white'}`}
-              >
-                <Disc className="w-6 h-6" />
-                <span className="text-[10px]">Record</span>
+                Save
               </button>
             </div>
+          </form>
+        </div>
+      )}
 
-            <div className="flex justify-center pb-6">
-              <button 
-                onClick={handleEndCall}
-                className="w-16 h-16 bg-red-600 rounded-full flex items-center justify-center text-white shadow-xl hover:bg-red-700 active:scale-95 transition-all"
-              >
-                <Phone className="w-8 h-8 rotate-[135deg]" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Add Contact Modal */}
-        {isNewContactOpen && (
-          <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <form onSubmit={handleSaveContact} className="bg-white rounded-2xl p-6 w-full max-w-[320px] shadow-2xl">
-              <h3 className="text-base font-bold text-slate-800 mb-4">Add Contact</h3>
-              <input 
-                type="text" 
-                placeholder="Full Name" 
-                value={newContactName}
-                onChange={e => setNewContactName(e.target.value)}
-                required
-                className="w-full p-2.5 mb-3 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-emerald-500"
-              />
-              <input 
-                type="tel" 
-                placeholder="Phone Number" 
-                value={newContactPhone}
-                onChange={e => setNewContactPhone(e.target.value)}
-                required
-                className="w-full p-2.5 mb-4 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none focus:border-emerald-500"
-              />
-              <div className="flex gap-2">
-                <button 
-                  type="button"
-                  onClick={() => setIsNewContactOpen(false)}
-                  className="flex-1 py-2 text-xs font-semibold text-slate-500 bg-slate-100 rounded-xl hover:bg-slate-200"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  className="flex-1 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 shadow-sm"
-                >
-                  Save
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-      </div>
     </div>
   );
 }
