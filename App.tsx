@@ -83,7 +83,7 @@ function playDtmfTone(digit: string, duration = 0.12) {
     osc1.frequency.setValueAtTime(freqs[0], now);
     osc2.frequency.setValueAtTime(freqs[1], now);
 
-    gainNode.gain.setValueAtTime(0.18, now);
+    gainNode.gain.setValueAtTime(0.2, now);
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
     osc1.connect(gainNode);
@@ -97,48 +97,17 @@ function playDtmfTone(digit: string, duration = 0.12) {
   } catch {}
 }
 
-function playRingtone() {
-  try {
-    const ctx = getAudioContext();
-    const now = ctx.currentTime;
-    const osc1 = ctx.createOscillator();
-    const osc2 = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc1.frequency.setValueAtTime(440, now);
-    osc2.frequency.setValueAtTime(480, now);
-
-    gain.gain.setValueAtTime(0.15, now);
-    gain.gain.setValueAtTime(0.15, now + 1.2);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
-
-    osc1.connect(gain);
-    osc2.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc1.start(now);
-    osc2.start(now);
-    osc1.stop(now + 1.5);
-    osc2.stop(now + 1.5);
-  } catch {}
-}
-
 const initialContacts: Contact[] = [
-  { id: '1', name: 'Abebe Bikila', phoneNumber: '0911234567', avatarColor: '#10B981', category: 'Family' },
-  { id: '2', name: 'Almaz Ayana', phoneNumber: '0922345678', avatarColor: '#3B82F6', category: 'Friends' },
-  { id: '3', name: 'Ethio Telecom Customer Service', phoneNumber: '994', avatarColor: '#F59E0B', category: 'Services' },
-  { id: '4', name: 'Commercial Bank of Ethiopia (CBE)', phoneNumber: '951', avatarColor: '#8B5CF6', category: 'Services' },
-  { id: '5', name: 'Chala Regassa', phoneNumber: '0933456789', avatarColor: '#EC4899', category: 'Work' },
-  { id: '6', name: 'Dr. Bethlehem', phoneNumber: '0944567890', avatarColor: '#06B6D4', category: 'Work' },
-  { id: '7', name: 'Federal Police Hotline', phoneNumber: '991', avatarColor: '#EF4444', category: 'Services' }
+  { id: '1', name: 'Commercial Bank of Ethiopia (CBE)', phoneNumber: '951', avatarColor: '#8B5CF6', category: 'Services' },
+  { id: '2', name: 'Ethio Telecom Customer Service', phoneNumber: '994', avatarColor: '#F59E0B', category: 'Services' },
+  { id: '3', name: 'Abebe Bikila', phoneNumber: '0911234567', avatarColor: '#10B981', category: 'Family' },
+  { id: '4', name: 'Almaz Ayana', phoneNumber: '0922345678', avatarColor: '#3B82F6', category: 'Friends' },
+  { id: '5', name: 'Federal Police Hotline', phoneNumber: '991', avatarColor: '#EF4444', category: 'Services' }
 ];
 
 const initialCallLogs: CallLog[] = [
-  { id: 'log-1', contactName: 'Abebe Bikila', phoneNumber: '0911234567', type: 'incoming', timestamp: 'Today, 2:15 PM', simSlot: 1, duration: '2m 14s' },
-  { id: 'log-2', contactName: 'Commercial Bank of Ethiopia (CBE)', phoneNumber: '951', type: 'outgoing', timestamp: 'Today, 11:30 AM', simSlot: 2, duration: '45s' },
-  { id: 'log-3', phoneNumber: '0955678901', type: 'missed', timestamp: 'Yesterday, 6:45 PM', simSlot: 1 },
-  { id: 'log-4', contactName: 'Almaz Ayana', phoneNumber: '0922345678', type: 'outgoing', timestamp: 'Yesterday, 3:20 PM', simSlot: 1, duration: '5m 12s' },
-  { id: 'log-5', contactName: 'Ethio Telecom Customer Service', phoneNumber: '994', type: 'incoming', timestamp: 'Sep 14, 10:00 AM', simSlot: 2, duration: '1m 30s' }
+  { id: 'log-1', contactName: 'Commercial Bank of Ethiopia (CBE)', phoneNumber: '951', type: 'outgoing', timestamp: 'Today, 11:30 AM', simSlot: 1, duration: '45s' },
+  { id: 'log-2', contactName: 'Abebe Bikila', phoneNumber: '0911234567', type: 'incoming', timestamp: 'Today, 2:15 PM', simSlot: 1, duration: '2m 14s' }
 ];
 
 const defaultSims: SimConfig[] = [
@@ -149,14 +118,14 @@ const defaultSims: SimConfig[] = [
 export function App() {
   const [contacts, setContacts] = useState<Contact[]>(() => {
     try {
-      const s = localStorage.getItem('phone_contacts_v2');
+      const s = localStorage.getItem('phone_contacts_v3');
       return s ? JSON.parse(s) : initialContacts;
     } catch { return initialContacts; }
   });
 
   const [callLogs, setCallLogs] = useState<CallLog[]>(() => {
     try {
-      const s = localStorage.getItem('phone_logs_v2');
+      const s = localStorage.getItem('phone_logs_v3');
       return s ? JSON.parse(s) : initialCallLogs;
     } catch { return initialCallLogs; }
   });
@@ -174,28 +143,59 @@ export function App() {
   const [pendingCall, setPendingCall] = useState<{ number: string; name?: string } | null>(null);
   const [isSimDialogOpen, setIsSimDialogOpen] = useState(false);
   const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
+  
   const timerRef = useRef<any>(null);
-  const ringtoneIntervalRef = useRef<any>(null);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    try { localStorage.setItem('phone_contacts_v2', JSON.stringify(contacts)); } catch {}
+    try { localStorage.setItem('phone_contacts_v3', JSON.stringify(contacts)); } catch {}
   }, [contacts]);
 
   useEffect(() => {
-    try { localStorage.setItem('phone_logs_v2', JSON.stringify(callLogs)); } catch {}
+    try { localStorage.setItem('phone_logs_v3', JSON.stringify(callLogs)); } catch {}
   }, [callLogs]);
 
+  const stopAllAudio = () => {
+    if (currentAudioRef.current) {
+      try {
+        currentAudioRef.current.pause();
+        currentAudioRef.current.currentTime = 0;
+      } catch {}
+      currentAudioRef.current = null;
+    }
+  };
+
+  const playSoundTrack = (filename: string) => {
+    stopAllAudio();
+    try {
+      const audio = new Audio(`./${filename}`);
+      audio.preload = 'auto';
+      currentAudioRef.current = audio;
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          const fallback = new Audio(`/${filename}`);
+          fallback.play().catch(() => {});
+          currentAudioRef.current = fallback;
+        });
+      }
+    } catch {}
+  };
+
   useEffect(() => {
-    if (activeCall && activeCall.status === 'ringing') {
-      playRingtone();
-      ringtoneIntervalRef.current = setInterval(() => {
-        playRingtone();
-      }, 3000);
+    if (activeCall) {
+      if (activeCall.status === 'ringing') {
+        playSoundTrack('voice1.mp3');
+      } else if (activeCall.status === 'connected') {
+        playSoundTrack('voice2.mp3');
+      } else if (activeCall.status === 'ended') {
+        stopAllAudio();
+      }
     } else {
-      if (ringtoneIntervalRef.current) clearInterval(ringtoneIntervalRef.current);
+      stopAllAudio();
     }
     return () => {
-      if (ringtoneIntervalRef.current) clearInterval(ringtoneIntervalRef.current);
+      stopAllAudio();
     };
   }, [activeCall?.status]);
 
@@ -211,12 +211,14 @@ export function App() {
   }, [activeCall?.status]);
 
   const handleKeyPress = (digit: string) => {
+    getAudioContext();
     playDtmfTone(digit);
     setDialpadDigits(prev => prev + digit);
   };
 
   const handleInitiateCall = (number: string, name?: string) => {
     if (!number.trim()) return;
+    getAudioContext();
     playDtmfTone('5');
     const activeSimsList = sims.filter(s => s.active);
     if (activeSimsList.length > 1) {
@@ -257,7 +259,7 @@ export function App() {
 
     setTimeout(() => {
       setActiveCall(prev => prev ? { ...prev, status: 'ringing' } : null);
-    }, 1200);
+    }, 1500);
 
     setTimeout(() => {
       setActiveCall(prev => prev ? { ...prev, status: 'connected' } : null);
@@ -265,6 +267,7 @@ export function App() {
   };
 
   const handleEndCall = () => {
+    stopAllAudio();
     playDtmfTone('#', 0.2);
     if (activeCall) {
       const durSec = activeCall.duration;
@@ -308,10 +311,10 @@ export function App() {
   }, [contacts, searchQuery]);
 
   return (
-    <div className="w-full h-[100dvh] bg-[#f8f9fa] flex flex-col font-sans text-slate-800 overflow-hidden select-none">
+    <div className="fixed inset-0 w-full h-full bg-[#f8f9fa] flex flex-col font-sans text-slate-800 overflow-hidden select-none">
       
       {/* Top Mobile Status Header */}
-      <div className="flex justify-between items-center px-4 py-2 bg-white border-b border-slate-100 text-xs font-semibold">
+      <div className="flex justify-between items-center px-4 py-2.5 bg-white border-b border-slate-100 text-xs font-semibold shrink-0">
         <span className="text-slate-600 font-bold">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] bg-emerald-600 text-white px-2 py-0.5 rounded font-bold">ETHIO</span>
@@ -321,7 +324,7 @@ export function App() {
       </div>
 
       {/* Search Header */}
-      <div className="p-3 bg-white border-b border-slate-100 flex items-center gap-2">
+      <div className="p-3 bg-white border-b border-slate-100 flex items-center gap-2 shrink-0">
         <div className="flex-1 relative">
           <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
           <input 
@@ -344,7 +347,7 @@ export function App() {
       </div>
 
       {/* Scrollable List Area */}
-      <div className="flex-1 overflow-y-auto pb-64">
+      <div className="flex-1 overflow-y-auto pb-72">
         {activeTab === 'recents' ? (
           <div>
             <div className="flex gap-2 p-2 bg-white border-b border-slate-50">
@@ -429,6 +432,7 @@ export function App() {
           {dialpadDigits && (
             <button 
               onClick={() => {
+                getAudioContext();
                 playDtmfTone('0');
                 setDialpadDigits(prev => prev.slice(0, -1));
               }}
