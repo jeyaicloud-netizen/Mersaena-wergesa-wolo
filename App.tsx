@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Phone, PhoneCall, PhoneIncoming, PhoneOutgoing, PhoneMissed, 
-  Mic, MicOff, Volume2, VolumeX, Delete, MoreVertical, Keypad as KeypadIcon, Search, Plus, Clock, User
+  Mic, MicOff, Volume2, Delete, MoreVertical, LayoutGrid, Clock, User
 } from 'lucide-react';
 
 interface Contact {
@@ -9,7 +9,6 @@ interface Contact {
   name: string;
   phoneNumber: string;
   avatarColor: string;
-  category?: 'Family' | 'Work' | 'Friends' | 'Services';
 }
 
 interface CallLog {
@@ -81,20 +80,8 @@ const initialCallLogs: CallLog[] = [
 ];
 
 export function App() {
-  const [contacts, setContacts] = useState<Contact[]>(() => {
-    try {
-      const s = localStorage.getItem('phone_contacts_v4');
-      return s ? JSON.parse(s) : initialContacts;
-    } catch { return initialContacts; }
-  });
-
-  const [callLogs, setCallLogs] = useState<CallLog[]>(() => {
-    try {
-      const s = localStorage.getItem('phone_logs_v4');
-      return s ? JSON.parse(s) : initialCallLogs;
-    } catch { return initialCallLogs; }
-  });
-
+  const [contacts] = useState<Contact[]>(initialContacts);
+  const [callLogs, setCallLogs] = useState<CallLog[]>(initialCallLogs);
   const [dialpadDigits, setDialpadDigits] = useState('');
   const [activeTab, setActiveTab] = useState<'home' | 'keypad'>('home');
   const [filter, setFilter] = useState<'All' | 'Missed' | 'Contacts'>('All');
@@ -112,14 +99,6 @@ export function App() {
   const [inCallKeypadDigits, setInCallKeypadDigits] = useState('');
   const timerRef = useRef<any>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    try { localStorage.setItem('phone_contacts_v4', JSON.stringify(contacts)); } catch {}
-  }, [contacts]);
-
-  useEffect(() => {
-    try { localStorage.setItem('phone_logs_v4', JSON.stringify(callLogs)); } catch {}
-  }, [callLogs]);
 
   const stopAllAudio = () => {
     if (currentAudioRef.current) {
@@ -316,7 +295,7 @@ export function App() {
         )}
       </div>
 
-      {/* Dialpad Popup / Section */}
+      {/* Dialpad Popup */}
       {activeTab === 'keypad' && (
         <div className="fixed bottom-16 left-0 right-0 bg-[#f3f4fa] rounded-t-[32px] p-4 shadow-2xl border-t border-slate-200 z-30 animate-in slide-in-from-bottom duration-200">
           <div className="flex justify-between items-center mb-2 px-6">
@@ -380,7 +359,7 @@ export function App() {
           className="flex flex-col items-center gap-1"
         >
           <div className={`px-5 py-1 rounded-full transition-colors ${activeTab === 'keypad' ? 'bg-[#d8e2ff] text-[#001a41]' : 'text-slate-600'}`}>
-            <KeypadIcon className="w-5 h-5" />
+            <LayoutGrid className="w-5 h-5" />
           </div>
           <span className="text-[11px] font-bold text-slate-700">Keypad</span>
         </button>
@@ -433,7 +412,7 @@ export function App() {
                   activeCall.isKeypadOpen ? 'bg-blue-600 text-white' : 'bg-white text-slate-700'
                 }`}
               >
-                <KeypadIcon className="w-5 h-5" />
+                <LayoutGrid className="w-5 h-5" />
                 <span className="text-[10px] font-bold">Keypad</span>
               </button>
 
