@@ -12,24 +12,17 @@ import {
   Activity,
   Play
 } from 'lucide-react';
-import { AUDIO_BASE64 } from './audioData';
 
 interface ChatMessage {
   id: string;
   sender: 'agent' | 'user';
   text: string;
   time: string;
-  stepKey?: keyof typeof AUDIO_BASE64;
 }
 
-const BANKING_STEPS: {
-  key: keyof typeof AUDIO_BASE64;
-  agentText: string;
-  quickReplies: string[];
-  agentStatus: string;
-}[] = [
+const BANKING_STEPS = [
   {
-    key: 'step1',
+    stepIndex: 0,
     agentText: "ሰላም ጤና ይስጥልኝ ከኢትዮጵያ ንግድ ባንክ ነው፤ እባክዎት ምን ልርዳዎት?",
     quickReplies: [
       "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
@@ -39,7 +32,7 @@ const BANKING_STEPS: {
     agentStatus: "ይስሀቅ መስመር ላይ ነው • እርስዎን በማዳመጥ ላይ"
   },
   {
-    key: 'step2',
+    stepIndex: 1,
     agentText: "እሺ ደንበኛችን፤ ለመሆኑ ገንዘቡን ከየትኛው አካውንት ነው የላኩት? ወይስ ከእርስዎ የሲቢኢ ብር አካውንት ነው?",
     quickReplies: [
       "ከራሴ የሲቢኢ ብር (CBE Birr) አካውንት ነው የላኩት",
@@ -49,7 +42,7 @@ const BANKING_STEPS: {
     agentStatus: "ይስሀቅ የአካውንት አይነት እየጠየቀ ነው"
   },
   {
-    key: 'step3',
+    stepIndex: 2,
     agentText: "እሺ አዳምጬ ተረድቻለሁ፤ እባክዎ የተላከለት ሰው የአካውንት ስም እና የአካውንት ቁጥር ይንገሩኝ?",
     quickReplies: [
       "አካውንት ቁጥር 100023456789፤ ስሙ አበበ ከበደ",
@@ -59,7 +52,7 @@ const BANKING_STEPS: {
     agentStatus: "ይስሀቅ የተቀባይ መረጃ በመጠየቅ ላይ..."
   },
   {
-    key: 'step4',
+    stepIndex: 3,
     agentText: "እሺ በሲስተማችን ቼክ እያደረግሁ ነው... አዎ! ግብይቱን እያየሁት ነው፤ በሲስተም መዘግየት ምክንያት ነው መልዕክቱ ያልደረሰው። በ24 ሰዓት ውስጥ ለተላከለት ሰው ሙሉ በሙሉ ይደርሳል!",
     quickReplies: [
       "እሺ በጣም አመሰግናለሁ፤ ሌላ ጥያቄ የለኝም",
@@ -69,7 +62,7 @@ const BANKING_STEPS: {
     agentStatus: "በሲስተም ቼክ ተደርጓል • ግብይቱ ተረጋግጧል"
   },
   {
-    key: 'step5',
+    stepIndex: 4,
     agentText: "በጣም ደስ ብሎኛል! ስለደወሉ ከልብ እናመሰግናለን፤ መልካም ቀን ይሁንልዎ! የኢትዮጵያ ንግድ ባንክ ሁሌም ከእርስዎ ጋር ነው!",
     quickReplies: [
       "እንደገና ደውል (951)",
@@ -90,10 +83,9 @@ export default function App() {
   const [dialogueStage, setDialogueStage] = useState<number>(0);
   const [agentStatus, setAgentStatus] = useState<string>('መስመር ላይ ነው');
 
-  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     if (callState === 'ivr' || callState === 'agent') {
@@ -119,98 +111,87 @@ export default function App() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  /**
-   * Real Ameha MP3 Sound Player using Base64 Data URI
-   */
-  const playAmehaAudio = (key: keyof typeof AUDIO_BASE64) => {
-    const audio = audioPlayerRef.current;
-    if (!audio) return;
-
+  const playBeepTone = (frequency = 600, duration = 0.2) => {
     try {
-      const dataUri = AUDIO_BASE64[key];
-      if (!dataUri) return;
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContextClass();
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
 
-      audio.pause();
-      audio.src = dataUri;
-      audio.load();
-
-      setIsPlaying(true);
-      setAgentStatus('ይስሀቅ በድምፅ እያወራ ነው...');
-
-      audio.onended = () => {
-        setIsPlaying(false);
-        setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-      };
-
-      audio.onerror = () => {
-        setIsPlaying(false);
-        setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-      };
-
-      const promise = audio.play();
-      if (promise !== undefined) {
-        promise.catch((err) => {
-          console.error("Audio playback error:", err);
-          setIsPlaying(false);
-        });
-      }
-    } catch (e) {
-      console.error(e);
-      setIsPlaying(false);
-    }
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(frequency, ctx.currentTime);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + duration);
+    } catch {}
   };
 
-  /**
-   * Android WebView MediaRecorder microphone
-   */
-  const handleMicClick = async () => {
+  const playAgentVoice = (text: string) => {
+    setIsPlaying(true);
+    setAgentStatus('ይስሀቅ በድምፅ እያወራ ነው...');
+    playBeepTone(800, 0.15);
+
+    if ('speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'am-ET';
+        utterance.rate = 0.95;
+
+        utterance.onend = () => {
+          setIsPlaying(false);
+          setAgentStatus('እርስዎን በማዳመጥ ላይ...');
+        };
+        utterance.onerror = () => {
+          setIsPlaying(false);
+          setAgentStatus('እርስዎን በማዳመጥ ላይ...');
+        };
+
+        window.speechSynthesis.speak(utterance);
+        return;
+      } catch {}
+    }
+
+    setTimeout(() => {
+      setIsPlaying(false);
+      setAgentStatus('እርስዎን በማዳመጥ ላይ...');
+    }, 2500);
+  };
+
+  const handleMicClick = () => {
     if (isRecording) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
       setIsRecording(false);
+      setAgentStatus('ድምፅዎን አዳምጦ ጨርሷል...');
       return;
     }
 
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = mediaRecorder;
+    playBeepTone(1000, 0.1);
+    setIsRecording(true);
+    setAgentStatus('🎙️ ይስሀቅ እያዳመጠዎት ነው... ይናገሩ!');
 
-        mediaRecorder.onstop = () => {
-          setIsRecording(false);
-          setAgentStatus('ይስሀቅ ድምፅዎን ተረድቶ መልስ እየሰጠ ነው...');
-          
-          const replies = [
-            "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
-            "ከራሴ የሲቢኢ ብር (CBE Birr) አካውንት ነው",
-            "አካውንት ቁጥር 100023456789፤ ስሙ አበበ ከበደ",
-            "እሺ በጣም አመሰግናለሁ፤ ሌላ ጥያቄ የለኝም"
-          ];
-          const spoken = replies[dialogueStage] || "መልስ በድምፅ ተሰጥቷል";
-          handleUserResponse(spoken);
-
-          stream.getTracks().forEach((track) => track.stop());
-        };
-
-        mediaRecorder.start();
-        setIsRecording(true);
-        setAgentStatus('🎙️ ድምፅዎን እየቀረጸ ነው... ሲጨርሱ ማይኩን ድጋሚ ይጫኑ!');
-        return;
-      } catch (err) {
-        console.warn("getUserMedia failed, using quick speech prompt", err);
-      }
-    }
-
-    // Direct Voice Simulation if WebView blocks microphone stream
-    const currentReplies = BANKING_STEPS[dialogueStage]?.quickReplies;
-    if (currentReplies && currentReplies.length > 0) {
-      handleUserResponse(currentReplies[0]);
-    }
+    setTimeout(() => {
+      setIsRecording(false);
+      setAgentStatus('ይስሀቅ ድምፅዎን ተረድቶ መልስ እየሰጠ ነው...');
+      
+      const suggestedResponses = [
+        "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
+        "ከራሴ የሲቢኢ ብር (CBE Birr) አካውንት ነው የላኩት",
+        "አካውንት ቁጥር 100023456789፤ ስሙ አበበ ከበደ",
+        "እሺ በጣም አመሰግናለሁ፤ ሌላ ጥያቄ የለኝም"
+      ];
+      const autoText = suggestedResponses[dialogueStage] || "መልስ በድምፅ ተሰጥቷል";
+      handleUserResponse(autoText);
+    }, 3200);
   };
 
   const handleKeypadPress = (key: string) => {
+    playBeepTone(400 + parseInt(key || '1', 10) * 50, 0.08);
     if (callState === 'idle') {
       setDialNumber((prev) => (prev.length < 10 ? prev + key : prev));
     } else if (callState === 'ivr') {
@@ -222,21 +203,16 @@ export default function App() {
 
   const handleStartCall = (num = dialNumber) => {
     if (!num.trim()) return;
-    
-    // Unlock Android Audio
-    if (audioPlayerRef.current) {
-      audioPlayerRef.current.src = AUDIO_BASE64.step1;
-      audioPlayerRef.current.load();
-    }
-
+    playBeepTone(500, 0.3);
     setCallState('calling');
     setTimeout(() => {
       setCallState('ivr');
+      playBeepTone(750, 0.2);
     }, 1200);
   };
 
-  // Transfer to Agent (Key 4)
   const transferToAgent = () => {
+    playBeepTone(900, 0.2);
     setCallState('agent');
     setDialogueStage(0);
 
@@ -246,15 +222,13 @@ export default function App() {
         id: 'step-0',
         sender: 'agent',
         text: first.agentText,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        stepKey: 'step1'
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
     ]);
 
-    playAmehaAudio('step1');
+    playAgentVoice(first.agentText);
   };
 
-  // Handle user response
   const handleUserResponse = (text: string) => {
     if (!text.trim() || callState !== 'agent') return;
 
@@ -278,12 +252,11 @@ export default function App() {
           id: `agent-${Date.now()}`,
           sender: 'agent',
           text: nextStep.agentText,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          stepKey: nextStep.key
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
         setConversation((prev) => [...prev, agentMsg]);
         setAgentStatus(nextStep.agentStatus);
-        playAmehaAudio(nextStep.key);
+        playAgentVoice(nextStep.agentText);
       }, 700);
     } else {
       setTimeout(() => {
@@ -292,10 +265,10 @@ export default function App() {
     }
   };
 
-  // End Call
   const handleEndCall = () => {
-    if (audioPlayerRef.current) {
-      audioPlayerRef.current.pause();
+    playBeepTone(300, 0.4);
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
     }
     setCallState('ended');
     setTimeout(() => {
@@ -311,9 +284,6 @@ export default function App() {
   return (
     <div className="flex justify-center items-center min-h-screen bg-[#060A12] p-2 sm:p-4 font-sans text-slate-100">
       
-      {/* Hidden real Audio element holding Base64 MP3 Ameha audio */}
-      <audio ref={audioPlayerRef} playsInline preload="auto" />
-
       {/* Main Mobile App Frame */}
       <div className="w-full max-w-[420px] h-[92vh] max-h-[860px] bg-[#0E1726] rounded-[38px] shadow-2xl border-4 border-slate-700/60 flex flex-col overflow-hidden relative">
         
@@ -325,7 +295,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
-              Ameha AI Voice
+              CBE AI Voice
             </span>
             <span className="font-semibold text-slate-200">
               {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -542,7 +512,7 @@ export default function App() {
                     <div className="flex items-center gap-1.5">
                       <h3 className="font-bold text-sm text-white">ይስሀቅ (CBE Support)</h3>
                       <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
-                        Ameha AI
+                        AI Voice
                       </span>
                     </div>
                     <p className="text-xs text-slate-400 flex items-center gap-1">
@@ -557,7 +527,7 @@ export default function App() {
                       ) : isRecording ? (
                         <span className="text-rose-400 flex items-center gap-1 font-bold animate-pulse">
                           <Activity size={10} />
-                          🎙️ ድምፅዎን እየቀረጸ ነው...
+                          🎙️ ድምፅዎን እያዳመጠ ነው...
                         </span>
                       ) : (
                         <span className="text-slate-300">👂 {agentStatus}</span>
@@ -570,7 +540,7 @@ export default function App() {
                   <button
                     onClick={() => {
                       const cur = BANKING_STEPS[dialogueStage];
-                      if (cur) playAmehaAudio(cur.key);
+                      if (cur) playAgentVoice(cur.agentText);
                     }}
                     className="px-2.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition active:scale-95 flex items-center gap-1"
                     title="ድምፁን አጫውት"
@@ -609,9 +579,9 @@ export default function App() {
                   >
                     <div className="flex items-start justify-between gap-2.5">
                       <span>{msg.text}</span>
-                      {msg.sender === 'agent' && msg.stepKey && (
+                      {msg.sender === 'agent' && (
                         <button
-                          onClick={() => playAmehaAudio(msg.stepKey!)}
+                          onClick={() => playAgentVoice(msg.text)}
                           className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-2 py-1 rounded-lg transition shrink-0 font-bold flex items-center gap-1 shadow-sm active:scale-95"
                           title="ድምፁን አጫውት"
                         >
@@ -666,7 +636,7 @@ export default function App() {
                   title={isRecording ? 'መቅረጽ አቁም' : 'ድምፅ ለመቅረጽ ይጫኑ'}
                 >
                   <Mic size={18} />
-                  {isRecording && <span className="text-[10px] font-bold">እየቀረጸ ነው...</span>}
+                  {isRecording && <span className="text-[10px] font-bold">እየሰማ ነው...</span>}
                 </button>
 
                 <input
