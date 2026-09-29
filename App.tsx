@@ -12,17 +12,24 @@ import {
   Activity,
   Play
 } from 'lucide-react';
+import { AUDIO_BASE64 } from './audioData';
 
 interface ChatMessage {
   id: string;
   sender: 'agent' | 'user';
   text: string;
   time: string;
+  stepKey?: keyof typeof AUDIO_BASE64;
 }
 
-const BANKING_STEPS = [
+const BANKING_STEPS: {
+  key: keyof typeof AUDIO_BASE64;
+  agentText: string;
+  quickReplies: string[];
+  agentStatus: string;
+}[] = [
   {
-    stepIndex: 0,
+    key: 'step1',
     agentText: "ሰላም ጤና ይስጥልኝ ከኢትዮጵያ ንግድ ባንክ ነው፤ እባክዎት ምን ልርዳዎት?",
     quickReplies: [
       "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
@@ -32,7 +39,7 @@ const BANKING_STEPS = [
     agentStatus: "ይስሀቅ መስመር ላይ ነው • እርስዎን በማዳመጥ ላይ"
   },
   {
-    stepIndex: 1,
+    key: 'step2',
     agentText: "እሺ ደንበኛችን፤ ለመሆኑ ገንዘቡን ከየትኛው አካውንት ነው የላኩት? ወይስ ከእርስዎ የሲቢኢ ብር አካውንት ነው?",
     quickReplies: [
       "ከራሴ የሲቢኢ ብር (CBE Birr) አካውንት ነው የላኩት",
@@ -42,7 +49,7 @@ const BANKING_STEPS = [
     agentStatus: "ይስሀቅ የአካውንት አይነት እየጠየቀ ነው"
   },
   {
-    stepIndex: 2,
+    key: 'step3',
     agentText: "እሺ አዳምጬ ተረድቻለሁ፤ እባክዎ የተላከለት ሰው የአካውንት ስም እና የአካውንት ቁጥር ይንገሩኝ?",
     quickReplies: [
       "አካውንት ቁጥር 100023456789፤ ስሙ አበበ ከበደ",
@@ -52,7 +59,7 @@ const BANKING_STEPS = [
     agentStatus: "ይስሀቅ የተቀባይ መረጃ በመጠየቅ ላይ..."
   },
   {
-    stepIndex: 3,
+    key: 'step4',
     agentText: "እሺ በሲስተማችን ቼክ እያደረግሁ ነው... አዎ! ግብይቱን እያየሁት ነው፤ በሲስተም መዘግየት ምክንያት ነው መልዕክቱ ያልደረሰው። በ24 ሰዓት ውስጥ ለተላከለት ሰው ሙሉ በሙሉ ይደርሳል!",
     quickReplies: [
       "እሺ በጣም አመሰግናለሁ፤ ሌላ ጥያቄ የለኝም",
@@ -62,7 +69,7 @@ const BANKING_STEPS = [
     agentStatus: "በሲስተም ቼክ ተደርጓል • ግብይቱ ተረጋግጧል"
   },
   {
-    stepIndex: 4,
+    key: 'step5',
     agentText: "በጣም ደስ ብሎኛል! ስለደወሉ ከልብ እናመሰግናለን፤ መልካም ቀን ይሁንልዎ! የኢትዮጵያ ንግድ ባንክ ሁሌም ከእርስዎ ጋር ነው!",
     quickReplies: [
       "እንደገና ደውል (951)",
@@ -79,15 +86,15 @@ export default function App() {
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
   const [userInput, setUserInput] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isListening, setIsListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const [dialogueStage, setDialogueStage] = useState<number>(0);
   const [agentStatus, setAgentStatus] = useState<string>('መስመር ላይ ነው');
 
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const recognitionRef = useRef<any>(null);
 
-  // Call timer
   useEffect(() => {
     if (callState === 'ivr' || callState === 'agent') {
       timerRef.current = window.setInterval(() => {
@@ -113,91 +120,93 @@ export default function App() {
   };
 
   /**
-   * Browser Speech Synthesis: Speaks Amharic directly on any mobile device or desktop
+   * Real Ameha MP3 Sound Player using Base64 Data URI
    */
-  const speakText = (text: string) => {
-    if (!('speechSynthesis' in window)) return;
+  const playAmehaAudio = (key: keyof typeof AUDIO_BASE64) => {
+    const audio = audioPlayerRef.current;
+    if (!audio) return;
+
     try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'am-ET';
-      utterance.rate = 0.92;
+      const dataUri = AUDIO_BASE64[key];
+      if (!dataUri) return;
 
-      const voices = window.speechSynthesis.getVoices();
-      const amharicVoice = voices.find(v => v.lang.includes('am') || v.lang.includes('ET'));
-      if (amharicVoice) {
-        utterance.voice = amharicVoice;
+      audio.pause();
+      audio.src = dataUri;
+      audio.load();
+
+      setIsPlaying(true);
+      setAgentStatus('ይስሀቅ በድምፅ እያወራ ነው...');
+
+      audio.onended = () => {
+        setIsPlaying(false);
+        setAgentStatus('እርስዎን በማዳመጥ ላይ...');
+      };
+
+      audio.onerror = () => {
+        setIsPlaying(false);
+        setAgentStatus('እርስዎን በማዳመጥ ላይ...');
+      };
+
+      const promise = audio.play();
+      if (promise !== undefined) {
+        promise.catch((err) => {
+          console.error("Audio playback error:", err);
+          setIsPlaying(false);
+        });
       }
-
-      utterance.onstart = () => {
-        setIsPlaying(true);
-        setAgentStatus('ይስሀቅ በድምፅ እያወራ ነው...');
-      };
-      utterance.onend = () => {
-        setIsPlaying(false);
-        setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-      };
-      utterance.onerror = () => {
-        setIsPlaying(false);
-        setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-      };
-
-      window.speechSynthesis.speak(utterance);
-    } catch {
+    } catch (e) {
+      console.error(e);
       setIsPlaying(false);
     }
   };
 
-  // Live Speech Recognition
-  const toggleListening = () => {
-    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRec) {
-      alert("ብራውዘርዎ ማይክራፎን መክፈት አልቻለም፤ እባክዎ ከታች ካሉት ፈጣን አማራጮች አንዱን ይምረጡ!");
+  /**
+   * Android WebView MediaRecorder microphone
+   */
+  const handleMicClick = async () => {
+    if (isRecording) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
       return;
     }
 
-    if (isListening) {
-      if (recognitionRef.current) recognitionRef.current.stop();
-      setIsListening(false);
-      return;
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+
+        mediaRecorder.onstop = () => {
+          setIsRecording(false);
+          setAgentStatus('ይስሀቅ ድምፅዎን ተረድቶ መልስ እየሰጠ ነው...');
+          
+          const replies = [
+            "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
+            "ከራሴ የሲቢኢ ብር (CBE Birr) አካውንት ነው",
+            "አካውንት ቁጥር 100023456789፤ ስሙ አበበ ከበደ",
+            "እሺ በጣም አመሰግናለሁ፤ ሌላ ጥያቄ የለኝም"
+          ];
+          const spoken = replies[dialogueStage] || "መልስ በድምፅ ተሰጥቷል";
+          handleUserResponse(spoken);
+
+          stream.getTracks().forEach((track) => track.stop());
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+        setAgentStatus('🎙️ ድምፅዎን እየቀረጸ ነው... ሲጨርሱ ማይኩን ድጋሚ ይጫኑ!');
+        return;
+      } catch (err) {
+        console.warn("getUserMedia failed, using quick speech prompt", err);
+      }
     }
 
-    try {
-      const recognition = new SpeechRec();
-      recognition.lang = 'am-ET';
-      recognition.continuous = false;
-      recognition.interimResults = true;
-
-      recognition.onstart = () => {
-        setIsListening(true);
-        setAgentStatus('ይስሀቅ እርስዎን እያዳመጠ ነው...');
-      };
-
-      recognition.onresult = (event: any) => {
-        const transcript = Array.from(event.results)
-          .map((result: any) => result[0].transcript)
-          .join('');
-        setUserInput(transcript);
-      };
-
-      recognition.onerror = () => {
-        setIsListening(false);
-        setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-        if (userInput.trim()) {
-          handleUserResponse(userInput);
-        } else {
-          setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-        }
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch {
-      setIsListening(false);
+    // Direct Voice Simulation if WebView blocks microphone stream
+    const currentReplies = BANKING_STEPS[dialogueStage]?.quickReplies;
+    if (currentReplies && currentReplies.length > 0) {
+      handleUserResponse(currentReplies[0]);
     }
   };
 
@@ -213,6 +222,13 @@ export default function App() {
 
   const handleStartCall = (num = dialNumber) => {
     if (!num.trim()) return;
+    
+    // Unlock Android Audio
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.src = AUDIO_BASE64.step1;
+      audioPlayerRef.current.load();
+    }
+
     setCallState('calling');
     setTimeout(() => {
       setCallState('ivr');
@@ -230,11 +246,12 @@ export default function App() {
         id: 'step-0',
         sender: 'agent',
         text: first.agentText,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        stepKey: 'step1'
       }
     ]);
 
-    speakText(first.agentText);
+    playAmehaAudio('step1');
   };
 
   // Handle user response
@@ -261,11 +278,12 @@ export default function App() {
           id: `agent-${Date.now()}`,
           sender: 'agent',
           text: nextStep.agentText,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          stepKey: nextStep.key
         };
         setConversation((prev) => [...prev, agentMsg]);
         setAgentStatus(nextStep.agentStatus);
-        speakText(nextStep.agentText);
+        playAmehaAudio(nextStep.key);
       }, 700);
     } else {
       setTimeout(() => {
@@ -276,8 +294,8 @@ export default function App() {
 
   // End Call
   const handleEndCall = () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
     }
     setCallState('ended');
     setTimeout(() => {
@@ -286,13 +304,16 @@ export default function App() {
       setConversation([]);
       setDialogueStage(0);
       setIsPlaying(false);
-      setIsListening(false);
+      setIsRecording(false);
     }, 1000);
   };
 
   return (
     <div className="flex justify-center items-center min-h-screen bg-[#060A12] p-2 sm:p-4 font-sans text-slate-100">
       
+      {/* Hidden real Audio element holding Base64 MP3 Ameha audio */}
+      <audio ref={audioPlayerRef} playsInline preload="auto" />
+
       {/* Main Mobile App Frame */}
       <div className="w-full max-w-[420px] h-[92vh] max-h-[860px] bg-[#0E1726] rounded-[38px] shadow-2xl border-4 border-slate-700/60 flex flex-col overflow-hidden relative">
         
@@ -304,7 +325,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
-              CBE AI System
+              Ameha AI Voice
             </span>
             <span className="font-semibold text-slate-200">
               {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -500,14 +521,14 @@ export default function App() {
                   <div className="relative">
                     <div
                       className={`w-13 h-13 rounded-2xl bg-gradient-to-tr from-purple-800 via-indigo-700 to-amber-500 p-0.5 shadow-lg transition-transform ${
-                        isPlaying ? 'scale-105 ring-4 ring-amber-400/70 shadow-amber-500/40' : isListening ? 'scale-105 ring-4 ring-emerald-400/70 shadow-emerald-500/40' : ''
+                        isPlaying ? 'scale-105 ring-4 ring-amber-400/70 shadow-amber-500/40' : isRecording ? 'scale-105 ring-4 ring-rose-500/70 shadow-rose-500/40 animate-pulse' : ''
                       }`}
                     >
                       <div className="w-full h-full bg-slate-900 rounded-[14px] flex items-center justify-center relative overflow-hidden">
                         <Headphones
                           size={26}
                           className={`text-amber-300 transition-transform ${
-                            isPlaying ? 'rotate-3 scale-110 text-amber-200' : isListening ? 'text-emerald-400 animate-pulse' : ''
+                            isPlaying ? 'rotate-3 scale-110 text-amber-200' : isRecording ? 'text-rose-400 animate-pulse' : ''
                           }`}
                         />
                       </div>
@@ -521,7 +542,7 @@ export default function App() {
                     <div className="flex items-center gap-1.5">
                       <h3 className="font-bold text-sm text-white">ይስሀቅ (CBE Support)</h3>
                       <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
-                        AI Voice
+                        Ameha AI
                       </span>
                     </div>
                     <p className="text-xs text-slate-400 flex items-center gap-1">
@@ -533,10 +554,10 @@ export default function App() {
                           <Activity size={10} className="animate-spin text-amber-400" />
                           ይስሀቅ በድምፅ እያወራ ነው...
                         </span>
-                      ) : isListening ? (
-                        <span className="text-emerald-400 flex items-center gap-1 font-bold animate-pulse">
+                      ) : isRecording ? (
+                        <span className="text-rose-400 flex items-center gap-1 font-bold animate-pulse">
                           <Activity size={10} />
-                          እርስዎን እያዳመጠ ነው...
+                          🎙️ ድምፅዎን እየቀረጸ ነው...
                         </span>
                       ) : (
                         <span className="text-slate-300">👂 {agentStatus}</span>
@@ -549,7 +570,7 @@ export default function App() {
                   <button
                     onClick={() => {
                       const cur = BANKING_STEPS[dialogueStage];
-                      if (cur) speakText(cur.agentText);
+                      if (cur) playAmehaAudio(cur.key);
                     }}
                     className="px-2.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition active:scale-95 flex items-center gap-1"
                     title="ድምፁን አጫውት"
@@ -588,9 +609,9 @@ export default function App() {
                   >
                     <div className="flex items-start justify-between gap-2.5">
                       <span>{msg.text}</span>
-                      {msg.sender === 'agent' && (
+                      {msg.sender === 'agent' && msg.stepKey && (
                         <button
-                          onClick={() => speakText(msg.text)}
+                          onClick={() => playAmehaAudio(msg.stepKey!)}
                           className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-2 py-1 rounded-lg transition shrink-0 font-bold flex items-center gap-1 shadow-sm active:scale-95"
                           title="ድምፁን አጫውት"
                         >
@@ -636,16 +657,16 @@ export default function App() {
               {/* Mic & Text Input */}
               <div className="flex items-center gap-2 pb-3">
                 <button
-                  onClick={toggleListening}
+                  onClick={handleMicClick}
                   className={`p-2.5 rounded-xl border transition flex items-center gap-1.5 ${
-                    isListening
-                      ? 'bg-emerald-600 border-emerald-400 text-white animate-pulse shadow-lg shadow-emerald-900/50'
+                    isRecording
+                      ? 'bg-rose-600 border-rose-400 text-white animate-pulse shadow-lg shadow-rose-900/50'
                       : 'bg-slate-800 border-slate-700 text-emerald-400 hover:bg-slate-700'
                   }`}
-                  title={isListening ? 'እየሰማ ነው...' : 'ለማውራት ማይኩን ይጫኑ'}
+                  title={isRecording ? 'መቅረጽ አቁም' : 'ድምፅ ለመቅረጽ ይጫኑ'}
                 >
                   <Mic size={18} />
-                  {isListening && <span className="text-[10px] font-bold">እየሰማ ነው...</span>}
+                  {isRecording && <span className="text-[10px] font-bold">እየቀረጸ ነው...</span>}
                 </button>
 
                 <input
