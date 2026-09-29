@@ -85,7 +85,6 @@ export default function App() {
 
   const timerRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     if (callState === 'ivr' || callState === 'agent') {
@@ -111,38 +110,19 @@ export default function App() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const playBeepTone = (frequency = 600, duration = 0.2) => {
-    try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) return;
-      if (!audioCtxRef.current) audioCtxRef.current = new AudioContextClass();
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(frequency, ctx.currentTime);
-      gain.gain.setValueAtTime(0.15, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + duration);
-    } catch {}
-  };
-
+  /**
+   * Sound player for Amharic Speech
+   */
   const playAgentVoice = (text: string) => {
     setIsPlaying(true);
     setAgentStatus('ይስሀቅ በድምፅ እያወራ ነው...');
-    playBeepTone(800, 0.15);
 
     if ('speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'am-ET';
-        utterance.rate = 0.95;
+        utterance.rate = 0.90;
 
         utterance.onend = () => {
           setIsPlaying(false);
@@ -164,34 +144,46 @@ export default function App() {
     }, 2500);
   };
 
-  const handleMicClick = () => {
+  /**
+   * Toggle: First click starts recording, SECOND CLICK stops and sends!
+   */
+  const handleMicToggle = () => {
     if (isRecording) {
       setIsRecording(false);
-      setAgentStatus('ድምፅዎን አዳምጦ ጨርሷል...');
-      return;
-    }
-
-    playBeepTone(1000, 0.1);
-    setIsRecording(true);
-    setAgentStatus('🎙️ ይስሀቅ እያዳመጠዎት ነው... ይናገሩ!');
-
-    setTimeout(() => {
-      setIsRecording(false);
       setAgentStatus('ይስሀቅ ድምፅዎን ተረድቶ መልስ እየሰጠ ነው...');
-      
-      const suggestedResponses = [
+
+      const defaultAnswers = [
         "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
         "ከራሴ የሲቢኢ ብር (CBE Birr) አካውንት ነው የላኩት",
         "አካውንት ቁጥር 100023456789፤ ስሙ አበበ ከበደ",
         "እሺ በጣም አመሰግናለሁ፤ ሌላ ጥያቄ የለኝም"
       ];
-      const autoText = suggestedResponses[dialogueStage] || "መልስ በድምፅ ተሰጥቷል";
-      handleUserResponse(autoText);
-    }, 3200);
+      const answer = userInput.trim() || defaultAnswers[dialogueStage] || "በድምፅ መልስ ተሰጥቷል";
+      handleUserResponse(answer);
+    } else {
+      setIsRecording(true);
+      setAgentStatus('🎙️ ይስሀቅ እያዳመጠዎት ነው... አውርተው ሲጨርሱ ማይኩን ድጋሚ ይጫኑ!');
+
+      const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRec) {
+        try {
+          const rec = new SpeechRec();
+          rec.lang = 'am-ET';
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.onresult = (e: any) => {
+            const transcript = Array.from(e.results)
+              .map((r: any) => r[0].transcript)
+              .join('');
+            setUserInput(transcript);
+          };
+          rec.start();
+        } catch {}
+      }
+    }
   };
 
   const handleKeypadPress = (key: string) => {
-    playBeepTone(400 + parseInt(key || '1', 10) * 50, 0.08);
     if (callState === 'idle') {
       setDialNumber((prev) => (prev.length < 10 ? prev + key : prev));
     } else if (callState === 'ivr') {
@@ -203,16 +195,13 @@ export default function App() {
 
   const handleStartCall = (num = dialNumber) => {
     if (!num.trim()) return;
-    playBeepTone(500, 0.3);
     setCallState('calling');
     setTimeout(() => {
       setCallState('ivr');
-      playBeepTone(750, 0.2);
     }, 1200);
   };
 
   const transferToAgent = () => {
-    playBeepTone(900, 0.2);
     setCallState('agent');
     setDialogueStage(0);
 
@@ -266,7 +255,6 @@ export default function App() {
   };
 
   const handleEndCall = () => {
-    playBeepTone(300, 0.4);
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -627,16 +615,20 @@ export default function App() {
               {/* Mic & Text Input */}
               <div className="flex items-center gap-2 pb-3">
                 <button
-                  onClick={handleMicClick}
+                  onClick={handleMicToggle}
                   className={`p-2.5 rounded-xl border transition flex items-center gap-1.5 ${
                     isRecording
                       ? 'bg-rose-600 border-rose-400 text-white animate-pulse shadow-lg shadow-rose-900/50'
                       : 'bg-slate-800 border-slate-700 text-emerald-400 hover:bg-slate-700'
                   }`}
-                  title={isRecording ? 'መቅረጽ አቁም' : 'ድምፅ ለመቅረጽ ይጫኑ'}
+                  title={isRecording ? 'አውርተው ሲጨርሱ እዚህ ይጫኑ' : 'ድምፅ ለመናገር ይጫኑ'}
                 >
                   <Mic size={18} />
-                  {isRecording && <span className="text-[10px] font-bold">እየሰማ ነው...</span>}
+                  {isRecording ? (
+                    <span className="text-[10px] font-bold text-white">ሲጨርሱ ይጫኑት 🛑</span>
+                  ) : (
+                    <span className="text-[10px] font-bold">ተናገር 🎙️</span>
+                  )}
                 </button>
 
                 <input
