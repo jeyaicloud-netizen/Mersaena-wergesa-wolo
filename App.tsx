@@ -4,13 +4,13 @@ import {
   PhoneOff,
   Delete,
   Mic,
-  Volume2,
   Building2,
   Send,
   Sparkles,
   Headphones,
   Activity,
-  Play
+  Play,
+  Volume2
 } from 'lucide-react';
 
 interface ChatMessage {
@@ -20,58 +20,6 @@ interface ChatMessage {
   time: string;
 }
 
-const BANKING_STEPS = [
-  {
-    stepIndex: 0,
-    agentText: "ሰላም ጤና ይስጥልኝ ከኢትዮጵያ ንግድ ባንክ ነው፤ እባክዎት ምን ልርዳዎት?",
-    quickReplies: [
-      "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
-      "ብር አስተላልፌ ነበር ግን መልዕክት አልደረሰውም",
-      "ስለተላከ ብር ላጣራ ነበር"
-    ],
-    agentStatus: "ይስሀቅ መስመር ላይ ነው • እርስዎን በማዳመጥ ላይ"
-  },
-  {
-    stepIndex: 1,
-    agentText: "እሺ ደንበኛችን፤ ለመሆኑ ገንዘቡን ከየትኛው አካውንት ነው የላኩት? ወይስ ከእርስዎ የሲቢኢ ብር አካውንት ነው?",
-    quickReplies: [
-      "ከራሴ የሲቢኢ ብር (CBE Birr) አካውንት ነው የላኩት",
-      "ከመደበኛ የባንክ ሂሳብ ቁጥሬ ነው",
-      "በሞባይል ባንኪንግ ነው የላኩት"
-    ],
-    agentStatus: "ይስሀቅ የአካውንት አይነት እየጠየቀ ነው"
-  },
-  {
-    stepIndex: 2,
-    agentText: "እሺ አዳምጬ ተረድቻለሁ፤ እባክዎ የተላከለት ሰው የአካውንት ስም እና የአካውንት ቁጥር ይንገሩኝ?",
-    quickReplies: [
-      "አካውንት ቁጥር 100023456789፤ ስሙ አበበ ከበደ",
-      "አካውንት 100098765432፤ ስሟ ትዕግስት ኃይሉ",
-      "ስልኩ 0911223344፤ ስሙ ተስፋዬ በቀለ"
-    ],
-    agentStatus: "ይስሀቅ የተቀባይ መረጃ በመጠየቅ ላይ..."
-  },
-  {
-    stepIndex: 3,
-    agentText: "እሺ በሲስተማችን ቼክ እያደረግሁ ነው... አዎ! ግብይቱን እያየሁት ነው፤ በሲስተም መዘግየት ምክንያት ነው መልዕክቱ ያልደረሰው። በ24 ሰዓት ውስጥ ለተላከለት ሰው ሙሉ በሙሉ ይደርሳል!",
-    quickReplies: [
-      "እሺ በጣም አመሰግናለሁ፤ ሌላ ጥያቄ የለኝም",
-      "እሺ ይደርሳል ካሉኝ እጠብቃለሁ መልካም ቀን",
-      "በጣም አመሰግናለሁ ሰላም ሁኑ"
-    ],
-    agentStatus: "በሲስተም ቼክ ተደርጓል • ግብይቱ ተረጋግጧል"
-  },
-  {
-    stepIndex: 4,
-    agentText: "በጣም ደስ ብሎኛል! ስለደወሉ ከልብ እናመሰግናለን፤ መልካም ቀን ይሁንልዎ! የኢትዮጵያ ንግድ ባንክ ሁሌም ከእርስዎ ጋር ነው!",
-    quickReplies: [
-      "እንደገና ደውል (951)",
-      "ጥሪውን ጨርስ (Hang Up)"
-    ],
-    agentStatus: "ጥሪው በተሳካ ሁኔታ ተጠናቋል"
-  }
-];
-
 export default function App() {
   const [dialNumber, setDialNumber] = useState('');
   const [callState, setCallState] = useState<'idle' | 'calling' | 'ivr' | 'agent' | 'ended'>('idle');
@@ -79,12 +27,15 @@ export default function App() {
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
   const [userInput, setUserInput] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [dialogueStage, setDialogueStage] = useState<number>(0);
-  const [agentStatus, setAgentStatus] = useState<string>('መስመር ላይ ነው');
+  const [isListening, setIsListening] = useState(false);
+  const [isAgentThinking, setIsAgentThinking] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState('');
 
   const timerRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const silenceTimeoutRef = useRef<any>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     if (callState === 'ivr' || callState === 'agent') {
@@ -102,7 +53,7 @@ export default function App() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversation, isPlaying]);
+  }, [conversation, isPlaying, liveTranscript]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -110,80 +61,169 @@ export default function App() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  /**
-   * Sound player for Amharic Speech
-   */
-  const playAgentVoice = (text: string) => {
-    setIsPlaying(true);
-    setAgentStatus('ይስሀቅ በድምፅ እያወራ ነው...');
+  const playTelephoneSound = (freq = 700, duration = 0.15) => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!audioContextRef.current) audioContextRef.current = new AudioCtx();
+      const ctx = audioContextRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
 
-    if ('speechSynthesis' in window) {
-      try {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = 'am-ET';
-        utterance.rate = 0.90;
-
-        utterance.onend = () => {
-          setIsPlaying(false);
-          setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-        };
-        utterance.onerror = () => {
-          setIsPlaying(false);
-          setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-        };
-
-        window.speechSynthesis.speak(utterance);
-        return;
-      } catch {}
-    }
-
-    setTimeout(() => {
-      setIsPlaying(false);
-      setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-    }, 2500);
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + duration);
+    } catch {}
   };
 
-  /**
-   * Toggle: First click starts recording, SECOND CLICK stops and sends!
-   */
-  const handleMicToggle = () => {
-    if (isRecording) {
-      setIsRecording(false);
-      setAgentStatus('ይስሀቅ ድምፅዎን ተረድቶ መልስ እየሰጠ ነው...');
+  const speakAmharicVoice = (text: string) => {
+    setIsPlaying(true);
+    playTelephoneSound(850, 0.1);
 
-      const defaultAnswers = [
-        "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
-        "ከራሴ የሲቢኢ ብር (CBE Birr) አካውንት ነው የላኩት",
-        "አካውንት ቁጥር 100023456789፤ ስሙ አበበ ከበደ",
-        "እሺ በጣም አመሰግናለሁ፤ ሌላ ጥያቄ የለኝም"
-      ];
-      const answer = userInput.trim() || defaultAnswers[dialogueStage] || "በድምፅ መልስ ተሰጥቷል";
-      handleUserResponse(answer);
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'am-ET';
+      utterance.rate = 0.95;
+
+      const voices = window.speechSynthesis.getVoices();
+      const amharicVoice = voices.find(v => v.lang.includes('am') || v.lang.includes('ET'));
+      if (amharicVoice) utterance.voice = amharicVoice;
+
+      utterance.onend = () => {
+        setIsPlaying(false);
+        startContinuousListening();
+      };
+      utterance.onerror = () => {
+        setIsPlaying(false);
+        startContinuousListening();
+      };
+
+      window.speechSynthesis.speak(utterance);
     } else {
-      setIsRecording(true);
-      setAgentStatus('🎙️ ይስሀቅ እያዳመጠዎት ነው... አውርተው ሲጨርሱ ማይኩን ድጋሚ ይጫኑ!');
+      setTimeout(() => {
+        setIsPlaying(false);
+        startContinuousListening();
+      }, 3000);
+    }
+  };
 
-      const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRec) {
-        try {
-          const rec = new SpeechRec();
-          rec.lang = 'am-ET';
-          rec.continuous = true;
-          rec.interimResults = true;
-          rec.onresult = (e: any) => {
-            const transcript = Array.from(e.results)
-              .map((r: any) => r[0].transcript)
-              .join('');
-            setUserInput(transcript);
-          };
-          rec.start();
-        } catch {}
+  const startContinuousListening = () => {
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) return;
+
+    try {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
       }
+
+      const rec = new SpeechRec();
+      rec.lang = 'am-ET';
+      rec.continuous = true;
+      rec.interimResults = true;
+
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+
+      rec.onresult = (event: any) => {
+        let currentText = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          currentText += event.results[i][0].transcript;
+        }
+
+        setLiveTranscript(currentText);
+
+        if (silenceTimeoutRef.current) {
+          clearTimeout(silenceTimeoutRef.current);
+        }
+
+        // Wait 2.8 seconds of complete silence before answering!
+        silenceTimeoutRef.current = setTimeout(() => {
+          if (currentText.trim()) {
+            rec.stop();
+            setIsListening(false);
+            setLiveTranscript('');
+            handleSendMessageToAI(currentText.trim());
+          }
+        }, 2800);
+      };
+
+      rec.onerror = () => {
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+    } catch {
+      setIsListening(false);
+    }
+  };
+
+  const handleSendMessageToAI = async (messageText: string) => {
+    if (!messageText.trim()) return;
+
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      sender: 'user',
+      text: messageText,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setConversation(prev => [...prev, userMessage]);
+    setUserInput('');
+    setIsAgentThinking(true);
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: messageText,
+          history: conversation
+        })
+      });
+
+      const data = await res.json();
+      const reply = data.reply || "እሺ አዳምጬሃለሁ፤ የኢትዮጵያ ንግድ ባንክ ሲስተም ላይ ቼክ እያደረግሁልዎት ነው!";
+
+      setIsAgentThinking(false);
+
+      const agentMessage: ChatMessage = {
+        id: `agent-${Date.now()}`,
+        sender: 'agent',
+        text: reply,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setConversation(prev => [...prev, agentMessage]);
+
+      speakAmharicVoice(reply);
+    } catch (e) {
+      setIsAgentThinking(false);
+      const fallback = "ይቅርታ፤ የኔትወርክ መቆራረጥ አጋጥሞኝ ነው፤ እባክዎ እንደገና ይንገሩኝ?";
+      const agentMessage: ChatMessage = {
+        id: `agent-${Date.now()}`,
+        sender: 'agent',
+        text: fallback,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+      setConversation(prev => [...prev, agentMessage]);
+      speakAmharicVoice(fallback);
     }
   };
 
   const handleKeypadPress = (key: string) => {
+    playTelephoneSound(400 + parseInt(key || '1', 10) * 60, 0.08);
     if (callState === 'idle') {
       setDialNumber((prev) => (prev.length < 10 ? prev + key : prev));
     } else if (callState === 'ivr') {
@@ -195,84 +235,58 @@ export default function App() {
 
   const handleStartCall = (num = dialNumber) => {
     if (!num.trim()) return;
+    playTelephoneSound(500, 0.3);
     setCallState('calling');
     setTimeout(() => {
       setCallState('ivr');
+      playTelephoneSound(750, 0.2);
     }, 1200);
   };
 
   const transferToAgent = () => {
+    playTelephoneSound(900, 0.2);
     setCallState('agent');
-    setDialogueStage(0);
 
-    const first = BANKING_STEPS[0];
+    const welcome = "ሰላም ጤና ይስጥልኝ! ከኢትዮጵያ ንግድ ባንክ የደንበኞች ድጋፍ ማዕከል ይስሀቅ ነኝ። በምን ልርዳዎት?";
     setConversation([
       {
         id: 'step-0',
         sender: 'agent',
-        text: first.agentText,
+        text: welcome,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
     ]);
 
-    playAgentVoice(first.agentText);
-  };
-
-  const handleUserResponse = (text: string) => {
-    if (!text.trim() || callState !== 'agent') return;
-
-    const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
-      sender: 'user',
-      text: text,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-    setConversation((prev) => [...prev, userMsg]);
-    setUserInput('');
-
-    const nextStage = dialogueStage + 1;
-    if (nextStage < BANKING_STEPS.length) {
-      setDialogueStage(nextStage);
-      setAgentStatus('ይስሀቅ እያሰበበት ነው...');
-
-      setTimeout(() => {
-        const nextStep = BANKING_STEPS[nextStage];
-        const agentMsg: ChatMessage = {
-          id: `agent-${Date.now()}`,
-          sender: 'agent',
-          text: nextStep.agentText,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        };
-        setConversation((prev) => [...prev, agentMsg]);
-        setAgentStatus(nextStep.agentStatus);
-        playAgentVoice(nextStep.agentText);
-      }, 700);
-    } else {
-      setTimeout(() => {
-        handleEndCall();
-      }, 2500);
-    }
+    speakAmharicVoice(welcome);
   };
 
   const handleEndCall = () => {
+    playTelephoneSound(320, 0.4);
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
+    }
+
     setCallState('ended');
     setTimeout(() => {
       setCallState('idle');
       setDialNumber('');
       setConversation([]);
-      setDialogueStage(0);
       setIsPlaying(false);
-      setIsRecording(false);
-    }, 1000);
+      setIsListening(false);
+      setIsAgentThinking(false);
+    }, 1200);
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-[#060A12] p-2 sm:p-4 font-sans text-slate-100">
+    <div className="flex justify-center items-center min-h-screen bg-[#050912] p-2 sm:p-4 font-sans text-slate-100">
       
-      {/* Main Mobile App Frame */}
+      {/* Mobile Device Frame */}
       <div className="w-full max-w-[420px] h-[92vh] max-h-[860px] bg-[#0E1726] rounded-[38px] shadow-2xl border-4 border-slate-700/60 flex flex-col overflow-hidden relative">
         
         {/* Top Header */}
@@ -283,7 +297,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
-              CBE AI Voice
+              Live AI Voice ⚡
             </span>
             <span className="font-semibold text-slate-200">
               {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -297,10 +311,10 @@ export default function App() {
             <div className="text-center pt-2">
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-950/80 border border-purple-500/30 text-purple-300 text-xs font-medium mb-3 shadow-inner">
                 <Building2 size={13} className="text-purple-400" />
-                <span>የኢትዮጵያ ንግድ ባንክ AI ደንበኞች ድጋፍ</span>
+                <span>የኢትዮጵያ ንግድ ባንክ AI ድጋፍ ማዕከል</span>
               </div>
               <h1 className="text-lg font-bold text-slate-100">951 ይደውሉ</h1>
-              <p className="text-xs text-slate-400 mt-0.5">የደንበኞች ድጋፍ መስመር</p>
+              <p className="text-xs text-slate-400 mt-0.5">በእውነተኛው AI ድምፅ የተዘጋጀ</p>
             </div>
 
             {/* Display */}
@@ -325,7 +339,7 @@ export default function App() {
                   </div>
                   <div className="text-left">
                     <p className="font-bold text-xs text-white">የኢትዮጵያ ንግድ ባንክ (951)</p>
-                    <p className="text-[10px] text-purple-200">ይስሀቅን ለማግኘት ይጫኑ</p>
+                    <p className="text-[10px] text-purple-200">ይስሀቅን በቀጥታ በድምፅ ለማግኘት ይጫኑ</p>
                   </div>
                 </div>
                 <div className="px-3 py-1.5 rounded-lg bg-emerald-500 text-xs font-bold text-white flex items-center gap-1">
@@ -467,7 +481,7 @@ export default function App() {
           </div>
         )}
 
-        {/* SCREEN 4: CBE AI SMART SUPPORT */}
+        {/* SCREEN 4: CBE REAL AI SMART SUPPORT */}
         {callState === 'agent' && (
           <div className="flex-1 flex flex-col justify-between bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 overflow-hidden">
             
@@ -475,18 +489,18 @@ export default function App() {
             <div className="p-3.5 bg-slate-900/95 border-b border-slate-800 shadow-md">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  {/* Avatar */}
+                  {/* Dynamic Glowing Live Avatar */}
                   <div className="relative">
                     <div
                       className={`w-13 h-13 rounded-2xl bg-gradient-to-tr from-purple-800 via-indigo-700 to-amber-500 p-0.5 shadow-lg transition-transform ${
-                        isPlaying ? 'scale-105 ring-4 ring-amber-400/70 shadow-amber-500/40' : isRecording ? 'scale-105 ring-4 ring-rose-500/70 shadow-rose-500/40 animate-pulse' : ''
+                        isPlaying ? 'scale-105 ring-4 ring-amber-400/70 shadow-amber-500/40' : isListening ? 'scale-105 ring-4 ring-emerald-400/70 shadow-emerald-500/40' : ''
                       }`}
                     >
                       <div className="w-full h-full bg-slate-900 rounded-[14px] flex items-center justify-center relative overflow-hidden">
                         <Headphones
                           size={26}
                           className={`text-amber-300 transition-transform ${
-                            isPlaying ? 'rotate-3 scale-110 text-amber-200' : isRecording ? 'text-rose-400 animate-pulse' : ''
+                            isPlaying ? 'rotate-3 scale-110 text-amber-200' : isListening ? 'text-emerald-400 animate-pulse' : ''
                           }`}
                         />
                       </div>
@@ -500,7 +514,7 @@ export default function App() {
                     <div className="flex items-center gap-1.5">
                       <h3 className="font-bold text-sm text-white">ይስሀቅ (CBE Support)</h3>
                       <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
-                        AI Voice
+                        AI Agent
                       </span>
                     </div>
                     <p className="text-xs text-slate-400 flex items-center gap-1">
@@ -512,13 +526,18 @@ export default function App() {
                           <Activity size={10} className="animate-spin text-amber-400" />
                           ይስሀቅ በድምፅ እያወራ ነው...
                         </span>
-                      ) : isRecording ? (
-                        <span className="text-rose-400 flex items-center gap-1 font-bold animate-pulse">
+                      ) : isAgentThinking ? (
+                        <span className="text-purple-300 flex items-center gap-1 font-bold animate-pulse">
+                          <Sparkles size={10} className="animate-spin text-purple-400" />
+                          ይስሀቅ እያሰበ ነው...
+                        </span>
+                      ) : isListening ? (
+                        <span className="text-emerald-400 flex items-center gap-1 font-bold animate-pulse">
                           <Activity size={10} />
-                          🎙️ ድምፅዎን እያዳመጠ ነው...
+                          እርስዎን እያዳመጠ ነው (ይናገሩ)...
                         </span>
                       ) : (
-                        <span className="text-slate-300">👂 {agentStatus}</span>
+                        <span className="text-slate-300">👂 መስመር ላይ ዝግጁ ነው</span>
                       )}
                     </p>
                   </div>
@@ -527,8 +546,8 @@ export default function App() {
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => {
-                      const cur = BANKING_STEPS[dialogueStage];
-                      if (cur) playAgentVoice(cur.agentText);
+                      const lastMsg = conversation[conversation.length - 1];
+                      if (lastMsg && lastMsg.sender === 'agent') speakAmharicVoice(lastMsg.text);
                     }}
                     className="px-2.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition active:scale-95 flex items-center gap-1"
                     title="ድምፁን አጫውት"
@@ -545,6 +564,14 @@ export default function App() {
                   </button>
                 </div>
               </div>
+
+              {/* Live Subtitle Transcript while user speaks */}
+              {liveTranscript && (
+                <div className="mt-2 p-2 rounded-xl bg-emerald-950/70 border border-emerald-500/40 text-xs text-emerald-200 flex items-center gap-2 animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+                  <span className="truncate italic">" {liveTranscript} "</span>
+                </div>
+              )}
             </div>
 
             {/* Conversation Messages */}
@@ -569,7 +596,7 @@ export default function App() {
                       <span>{msg.text}</span>
                       {msg.sender === 'agent' && (
                         <button
-                          onClick={() => playAgentVoice(msg.text)}
+                          onClick={() => speakAmharicVoice(msg.text)}
                           className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-2 py-1 rounded-lg transition shrink-0 font-bold flex items-center gap-1 shadow-sm active:scale-95"
                           title="ድምፁን አጫውት"
                         >
@@ -588,23 +615,20 @@ export default function App() {
             <div className="px-3 pt-2 bg-slate-900/95 border-t border-slate-800/90">
               <p className="text-[10px] font-semibold text-purple-300 mb-1.5 flex items-center gap-1">
                 <Sparkles size={11} className="text-amber-400" />
-                ፈጣን መልሶች (ወይም ማይኩን ነክተው ይናገሩ)፦
+                የፈለጉትን ጥያቄ በአፍዎ ይናገሩ ወይም ከታች ይጻፉ፦
               </p>
 
-              {/* Quick stage suggestions */}
+              {/* Quick suggestions */}
               <div className="flex flex-wrap gap-1.5 mb-2 max-h-24 overflow-y-auto pb-1">
-                {BANKING_STEPS[dialogueStage]?.quickReplies.map((opt, i) => (
+                {[
+                  "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
+                  "የሲቢኢ ብር (CBE Birr) አካውንቴ ተቆልፏል",
+                  "ሂሳቤን ማወቅ እፈልጋለሁ",
+                  "የተላከው ብር በስህተት ወደ ሌላ አካውንት ሄዷል"
+                ].map((opt, i) => (
                   <button
                     key={i}
-                    onClick={() => {
-                      if (opt.includes("እንደገና ደውል")) {
-                        handleStartCall('951');
-                      } else if (opt.includes("ጥሪውን ጨርስ")) {
-                        handleEndCall();
-                      } else {
-                        handleUserResponse(opt);
-                      }
-                    }}
+                    onClick={() => handleSendMessageToAI(opt)}
                     className="px-2.5 py-1.5 rounded-xl bg-purple-950/70 hover:bg-purple-900 border border-purple-500/30 text-purple-200 text-xs font-medium transition active:scale-95 text-left"
                   >
                     {opt}
@@ -615,20 +639,23 @@ export default function App() {
               {/* Mic & Text Input */}
               <div className="flex items-center gap-2 pb-3">
                 <button
-                  onClick={handleMicToggle}
+                  onClick={() => {
+                    if (isListening) {
+                      if (recognitionRef.current) recognitionRef.current.stop();
+                      setIsListening(false);
+                    } else {
+                      startContinuousListening();
+                    }
+                  }}
                   className={`p-2.5 rounded-xl border transition flex items-center gap-1.5 ${
-                    isRecording
-                      ? 'bg-rose-600 border-rose-400 text-white animate-pulse shadow-lg shadow-rose-900/50'
+                    isListening
+                      ? 'bg-emerald-600 border-emerald-400 text-white animate-pulse shadow-lg shadow-emerald-900/50'
                       : 'bg-slate-800 border-slate-700 text-emerald-400 hover:bg-slate-700'
                   }`}
-                  title={isRecording ? 'አውርተው ሲጨርሱ እዚህ ይጫኑ' : 'ድምፅ ለመናገር ይጫኑ'}
+                  title={isListening ? 'እያዳመጠ ነው...' : 'ለማውራት ማይኩን ይጫኑ'}
                 >
                   <Mic size={18} />
-                  {isRecording ? (
-                    <span className="text-[10px] font-bold text-white">ሲጨርሱ ይጫኑት 🛑</span>
-                  ) : (
-                    <span className="text-[10px] font-bold">ተናገር 🎙️</span>
-                  )}
+                  {isListening && <span className="text-[10px] font-bold">እያዳመጠ ነው...</span>}
                 </button>
 
                 <input
@@ -636,17 +663,17 @@ export default function App() {
                   value={userInput}
                   onChange={(e) => setUserInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleUserResponse(userInput);
+                    if (e.key === 'Enter') handleSendMessageToAI(userInput);
                   }}
-                  placeholder="መልስዎን እዚህ ይጻፉ ወይም ማይኩን ይጫኑ..."
+                  placeholder="የፈለጉትን ጥያቄ እዚህ ይጻፉ ወይም ማይኩን ይጫኑ..."
                   className="flex-1 bg-slate-800/90 border border-slate-700 rounded-xl px-3.5 py-2 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-purple-500"
                 />
 
                 <button
-                  onClick={() => handleUserResponse(userInput)}
-                  disabled={!userInput.trim()}
+                  onClick={() => handleSendMessageToAI(userInput)}
+                  disabled={!userInput.trim() || isAgentThinking}
                   className={`p-2.5 rounded-xl transition ${
-                    userInput.trim()
+                    userInput.trim() && !isAgentThinking
                       ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-md'
                       : 'bg-slate-800 text-slate-600 cursor-not-allowed'
                   }`}
