@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Phone,
   PhoneCall,
   PhoneOff,
   Delete,
   Mic,
-  MicOff,
   Volume2,
   VolumeX,
   Building2,
@@ -14,26 +12,29 @@ import {
   Sparkles,
   RotateCcw,
   Headphones,
-  Award,
   ChevronRight,
   Activity,
-  CheckCircle2,
-  Radio
+  Play,
+  AlertCircle
 } from 'lucide-react';
+import { AUDIO_BASE64 } from './audioData';
 
 interface ChatMessage {
   id: string;
   sender: 'agent' | 'user';
   text: string;
   time: string;
-  audioFile?: string;
+  stepKey?: keyof typeof AUDIO_BASE64;
 }
 
-// Exactly structured banking dialog flow with authentic AmehaNeural voice clips
-const CBE_FLOW = [
+const BANKING_STEPS: {
+  key: keyof typeof AUDIO_BASE64;
+  agentText: string;
+  quickReplies: string[];
+  agentStatus: string;
+}[] = [
   {
-    stage: 0,
-    audio: '/audio/step1.mp3',
+    key: 'step1',
     agentText: "ሰላም ጤና ይስጥልኝ ከኢትዮጵያ ንግድ ባንክ ነው፤ እባክዎት ምን ልርዳዎት?",
     quickReplies: [
       "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
@@ -43,8 +44,7 @@ const CBE_FLOW = [
     agentStatus: "ይስሀቅ መስመር ላይ ነው • እርስዎን በማዳመጥ ላይ"
   },
   {
-    stage: 1,
-    audio: '/audio/step2.mp3',
+    key: 'step2',
     agentText: "እሺ ደንበኛችን፤ ለመሆኑ ገንዘቡን ከየትኛው አካውንት ነው የላኩት? ወይስ ከእርስዎ የሲቢኢ ብር አካውንት ነው?",
     quickReplies: [
       "ከራሴ የሲቢኢ ብር (CBE Birr) አካውንት ነው የላኩት",
@@ -54,8 +54,7 @@ const CBE_FLOW = [
     agentStatus: "ይስሀቅ የአካውንት አይነት እየጠየቀ ነው"
   },
   {
-    stage: 2,
-    audio: '/audio/step3.mp3',
+    key: 'step3',
     agentText: "እሺ አዳምጬ ተረድቻለሁ፤ እባክዎ የተላከለት ሰው የአካውንት ስም እና የአካውንት ቁጥር ይንገሩኝ?",
     quickReplies: [
       "አካውንት ቁጥር 100023456789፤ ስሙ አበበ ከበደ",
@@ -65,8 +64,7 @@ const CBE_FLOW = [
     agentStatus: "ይስሀቅ የተቀባይ መረጃ በመጠየቅ ላይ..."
   },
   {
-    stage: 3,
-    audio: '/audio/step4.mp3',
+    key: 'step4',
     agentText: "እሺ በሲስተማችን ቼክ እያደረግሁ ነው... አዎ! ግብይቱን እያየሁት ነው፤ በሲስተም መዘግየት ምክንያት ነው መልዕክቱ ያልደረሰው። በ24 ሰዓት ውስጥ ለተላከለት ሰው ሙሉ በሙሉ ይደርሳል!",
     quickReplies: [
       "እሺ በጣም አመሰግናለሁ፤ ሌላ ጥያቄ የለኝም",
@@ -76,8 +74,7 @@ const CBE_FLOW = [
     agentStatus: "በሲስተም ቼክ ተደርጓል • ግብይቱ ተረጋግጧል"
   },
   {
-    stage: 4,
-    audio: '/audio/step5.mp3',
+    key: 'step5',
     agentText: "በጣም ደስ ብሎኛል! ስለደወሉ ከልብ እናመሰግናለን፤ መልካም ቀን ይሁንልዎ! የኢትዮጵያ ንግድ ባንክ ሁሌም ከእርስዎ ጋር ነው!",
     quickReplies: [
       "እንደገና ደውል (951)",
@@ -93,19 +90,52 @@ export default function App() {
   const [callDuration, setCallDuration] = useState(0);
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
   const [userInput, setUserInput] = useState('');
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [volumeOn, setVolumeOn] = useState(true);
   const [dialogueStage, setDialogueStage] = useState<number>(0);
   const [agentStatus, setAgentStatus] = useState<string>('መስመር ላይ ነው');
+  const [playErrorNotice, setPlayErrorNotice] = useState<string>('');
 
-  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const timerRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const recognitionRef = useRef<any>(null);
 
-  // Call duration counter
+  // Initialize and attach event listeners to hidden native audio tag
+  useEffect(() => {
+    const audio = audioPlayerRef.current;
+    if (!audio) return;
+
+    const handlePlay = () => {
+      setIsPlaying(true);
+      setAgentStatus('ይስሀቅ በድምፅ እያወራ ነው...');
+      setPlayErrorNotice('');
+    };
+
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setAgentStatus('እርስዎን በማዳመጥ ላይ...');
+    };
+
+    const handleError = () => {
+      setIsPlaying(false);
+      setAgentStatus('እርስዎን በማዳመጥ ላይ...');
+    };
+
+    audio.addEventListener('play', handlePlay);
+    audio.addEventListener('playing', handlePlay);
+    audio.addEventListener('ended', handleEnded);
+    audio.addEventListener('error', handleError);
+
+    return () => {
+      audio.removeEventListener('play', handlePlay);
+      audio.removeEventListener('playing', handlePlay);
+      audio.removeEventListener('ended', handleEnded);
+      audio.removeEventListener('error', handleError);
+    };
+  }, []);
+
+  // Call timer
   useEffect(() => {
     if (callState === 'ivr' || callState === 'agent') {
       timerRef.current = window.setInterval(() => {
@@ -122,7 +152,7 @@ export default function App() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversation, isSpeaking]);
+  }, [conversation, isPlaying]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -130,129 +160,63 @@ export default function App() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Telecom audio tones (DTMF keypad & ring)
-  const playTone = (freq1: number, freq2: number, duration: number = 0.15) => {
-    if (!volumeOn) return;
-    try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-
-      const osc1 = ctx.createOscillator();
-      const osc2 = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc1.frequency.value = freq1;
-      osc2.frequency.value = freq2;
-
-      gain.gain.setValueAtTime(0.08, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc1.start();
-      osc2.start();
-      osc1.stop(ctx.currentTime + duration);
-      osc2.stop(ctx.currentTime + duration);
-    } catch {
-      // Audio fallback
-    }
-  };
-
   /**
-   * Plays the genuine AmehaNeural Amharic AI MP3 directly from the app
-   * with seamless Web Speech fallback for unmatched reliability.
+   * Directly load base64 sound into audioPlayerRef and execute .play()
    */
-  const playAgentAmharicVoice = (audioSrc: string, fallbackText: string) => {
-    if (!volumeOn) return;
-
-    // Stop any existing playing audio
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
-    }
-
-    setIsSpeaking(true);
-    setAgentStatus('ይስሀቅ በድምፅ እየተናገረ ነው...');
+  const playAudioStep = (stepKey: keyof typeof AUDIO_BASE64) => {
+    const audio = audioPlayerRef.current;
+    if (!audio) return;
 
     try {
-      const audio = new Audio(audioSrc);
-      currentAudioRef.current = audio;
+      const dataUri = AUDIO_BASE64[stepKey];
+      if (!dataUri) return;
 
-      audio.onended = () => {
-        setIsSpeaking(false);
-        setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-      };
+      audio.pause();
+      audio.src = dataUri;
+      audio.load();
 
-      audio.onerror = () => {
-        // Fallback to browser Web Speech API if audio element encounters restriction
-        if ('speechSynthesis' in window) {
-          window.speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance(fallbackText);
-          utterance.rate = 0.92;
-          const voices = window.speechSynthesis.getVoices();
-          const am = voices.find((v) => v.lang.includes('am') || v.name.includes('Amharic'));
-          if (am) utterance.voice = am;
-          utterance.onend = () => {
-            setIsSpeaking(false);
-            setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-          };
-          window.speechSynthesis.speak(utterance);
-        } else {
-          setIsSpeaking(false);
-          setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-        }
-      };
-
-      audio.play().catch(() => {
-        // If autoplay policy requires user gesture, use speech synthesis fallback
-        if ('speechSynthesis' in window) {
-          window.speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance(fallbackText);
-          utterance.onend = () => {
-            setIsSpeaking(false);
-            setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-          };
-          window.speechSynthesis.speak(utterance);
-        } else {
-          setIsSpeaking(false);
-        }
-      });
-    } catch {
-      setIsSpeaking(false);
+      const promise = audio.play();
+      if (promise !== undefined) {
+        promise
+          .then(() => {
+            setIsPlaying(true);
+            setPlayErrorNotice('');
+          })
+          .catch((err) => {
+            console.error('Playback error:', err);
+            setIsPlaying(false);
+            setPlayErrorNotice('ስልክዎ ድምፁን አግዶታል፤ ከላይ ያለውን ቢጫ "▶️ አጫውት" ንኩት!');
+          });
+      }
+    } catch (e) {
+      console.error(e);
+      setPlayErrorNotice('እባክዎ "▶️ አጫውት" የሚለውን ይጫኑ');
     }
   };
 
-  // Live Speech Recognition (Microphone listener)
+  // Live Speech Recognition
   const toggleListening = () => {
-    // Check speech recognition support
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("ብራውዘርዎ ማይክራፎን ድምፅ መቀበያውን ለመክፈት ፍቃድ ይፈልጋል፤ ወይም ከታች ካሉት ፈጣን መልሶች አንዱን ይጫኑ!");
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRec) {
+      alert("ብራውዘርዎ ማይክራፎን መክፈት አልቻለም፤ እባክዎ ከታች ካሉት ፈጣን አማራጮች አንዱን ይምረጡ!");
       return;
     }
 
     if (isListening) {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+      if (recognitionRef.current) recognitionRef.current.stop();
       setIsListening(false);
       return;
     }
 
     try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'am-ET'; // Amharic Ethiopian
+      const recognition = new SpeechRec();
+      recognition.lang = 'am-ET';
       recognition.continuous = false;
       recognition.interimResults = true;
 
       recognition.onstart = () => {
         setIsListening(true);
-        setAgentStatus('ይስሀቅ እስኪጨርሱ በትዕግስት እያዳመጠ ነው...');
+        setAgentStatus('ይስሀቅ እርስዎን እያዳመጠ ነው...');
       };
 
       recognition.onresult = (event: any) => {
@@ -283,11 +247,9 @@ export default function App() {
     }
   };
 
-  // Keypad press
   const handleKeypadPress = (key: string) => {
-    playTone(697, 1209, 0.1);
     if (callState === 'idle') {
-      setDialNumber((prev) => (prev.length < 12 ? prev + key : prev));
+      setDialNumber((prev) => (prev.length < 10 ? prev + key : prev));
     } else if (callState === 'ivr') {
       if (key === '4') {
         transferToAgent();
@@ -295,45 +257,43 @@ export default function App() {
     }
   };
 
-  // Start Call
   const handleStartCall = (num = dialNumber) => {
     if (!num.trim()) return;
-    playTone(440, 480, 0.4);
-    setCallState('calling');
 
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.src = AUDIO_BASE64.step1;
+      audioPlayerRef.current.load();
+    }
+
+    setCallState('calling');
     setTimeout(() => {
       setCallState('ivr');
-      playTone(941, 1336, 0.3);
-    }, 1800);
+    }, 1200);
   };
 
   // Transfer to Agent (Key 4)
   const transferToAgent = () => {
-    playTone(770, 1209, 0.25);
-    setCallState('calling');
+    setCallState('agent');
+    setDialogueStage(0);
 
-    setTimeout(() => {
-      setCallState('agent');
-      setDialogueStage(0);
-      const firstStep = CBE_FLOW[0];
-      setConversation([
-        {
-          id: 'step-0',
-          sender: 'agent',
-          text: firstStep.agentText,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          audioFile: firstStep.audio
-        }
-      ]);
-      playAgentAmharicVoice(firstStep.audio, firstStep.agentText);
-    }, 1200);
+    const first = BANKING_STEPS[0];
+    setConversation([
+      {
+        id: 'step-0',
+        sender: 'agent',
+        text: first.agentText,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        stepKey: 'step1'
+      }
+    ]);
+
+    playAudioStep('step1');
   };
 
-  // Handle user response (from speech or button or input)
+  // Handle user response
   const handleUserResponse = (text: string) => {
     if (!text.trim() || callState !== 'agent') return;
 
-    // Add user message
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       sender: 'user',
@@ -343,25 +303,24 @@ export default function App() {
     setConversation((prev) => [...prev, userMsg]);
     setUserInput('');
 
-    // Agent reasoning delay (feels natural like a real human call agent thinking)
     const nextStage = dialogueStage + 1;
-    if (nextStage < CBE_FLOW.length) {
+    if (nextStage < BANKING_STEPS.length) {
       setDialogueStage(nextStage);
-      setAgentStatus(nextStage === 3 ? 'በሲስተም ቼክ እያደረገ ነው...' : 'ይስሀቅ አዳምጦ እያሰበበት ነው...');
+      setAgentStatus('ይስሀቅ እያሰበበት ነው...');
 
       setTimeout(() => {
-        const nextStep = CBE_FLOW[nextStage];
+        const nextStep = BANKING_STEPS[nextStage];
         const agentMsg: ChatMessage = {
           id: `agent-${Date.now()}`,
           sender: 'agent',
           text: nextStep.agentText,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          audioFile: nextStep.audio
+          stepKey: nextStep.key
         };
         setConversation((prev) => [...prev, agentMsg]);
         setAgentStatus(nextStep.agentStatus);
-        playAgentAmharicVoice(nextStep.audio, nextStep.agentText);
-      }, 1000);
+        playAudioStep(nextStep.key);
+      }, 700);
     } else {
       setTimeout(() => {
         handleEndCall();
@@ -371,13 +330,8 @@ export default function App() {
 
   // End Call
   const handleEndCall = () => {
-    playTone(425, 425, 0.3);
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
-    }
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
     }
     setCallState('ended');
     setTimeout(() => {
@@ -385,33 +339,30 @@ export default function App() {
       setDialNumber('');
       setConversation([]);
       setDialogueStage(0);
-      setIsSpeaking(false);
+      setIsPlaying(false);
       setIsListening(false);
-    }, 1400);
+    }, 1000);
   };
 
   return (
-    <div className="flex justify-center items-center min-h-screen bg-[#070D18] p-2 sm:p-4 font-sans text-slate-100">
-      {/* Mobile Device Frame */}
-      <div className="w-full max-w-[420px] h-[92vh] max-h-[860px] bg-[#111C30] rounded-[38px] shadow-2xl border-4 border-slate-700/60 flex flex-col overflow-hidden relative">
+    <div className="flex justify-center items-center min-h-screen bg-[#060A12] p-2 sm:p-4 font-sans text-slate-100">
+      
+      {/* Hidden native Audio element holding base64 sound */}
+      <audio ref={audioPlayerRef} playsInline preload="auto" />
+
+      {/* Main Mobile App Frame */}
+      <div className="w-full max-w-[420px] h-[92vh] max-h-[860px] bg-[#0E1726] rounded-[38px] shadow-2xl border-4 border-slate-700/60 flex flex-col overflow-hidden relative">
         
-        {/* Top Status Bar */}
-        <div className="px-6 pt-3 pb-2 flex justify-between items-center bg-slate-900/80 backdrop-blur-md text-xs text-slate-400 border-b border-slate-800">
+        {/* Top Header */}
+        <div className="px-5 pt-3 pb-2 flex justify-between items-center bg-slate-900/90 text-xs text-slate-400 border-b border-slate-800">
           <div className="flex items-center gap-1.5 font-medium">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             <span>Ethio Telecom 4G</span>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-semibold border border-purple-500/30">
-              Ameha AI Voice
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
+              Ameha AI Sound
             </span>
-            <button
-              onClick={() => setVolumeOn(!volumeOn)}
-              className="text-slate-300 hover:text-white transition"
-              title="ድምፅ ማብሪያ/ማጥፊያ"
-            >
-              {volumeOn ? <Volume2 size={16} className="text-emerald-400" /> : <VolumeX size={16} className="text-rose-400" />}
-            </button>
             <span className="font-semibold text-slate-200">
               {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
@@ -444,19 +395,19 @@ export default function App() {
                   setDialNumber('951');
                   handleStartCall('951');
                 }}
-                className="w-full py-2.5 px-4 rounded-xl bg-purple-900/40 hover:bg-purple-900/60 border border-purple-500/40 flex items-center justify-between text-purple-200 text-sm font-medium transition active:scale-98"
+                className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-purple-800 to-indigo-800 hover:from-purple-700 hover:to-indigo-700 border border-purple-400/50 flex items-center justify-between text-white text-sm font-semibold transition active:scale-98 shadow-lg shadow-purple-950/60"
               >
                 <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-purple-600 flex items-center justify-center font-bold text-xs text-white shadow-md">
+                  <div className="w-9 h-9 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-black text-sm shadow">
                     CBE
                   </div>
                   <div className="text-left">
-                    <p className="font-semibold text-xs text-purple-100">የኢትዮጵያ ንግድ ባንክ (951)</p>
-                    <p className="text-[10px] text-purple-300/80">ጥሪ ማዕከል • 4 ሲነካ ድጋፍ ሰጪ ይስሀቅ</p>
+                    <p className="font-bold text-xs text-white">የኢትዮጵያ ንግድ ባንክ (951)</p>
+                    <p className="text-[10px] text-purple-200">ይስሀቅን ለማግኘት ይጫኑ</p>
                   </div>
                 </div>
-                <div className="px-2 py-1 rounded-md bg-purple-500/30 text-xs font-bold text-white flex items-center gap-1">
-                  ደውል <ChevronRight size={12} />
+                <div className="px-3 py-1.5 rounded-lg bg-emerald-500 text-xs font-bold text-white flex items-center gap-1">
+                  ደውል <PhoneCall size={12} />
                 </div>
               </button>
             </div>
@@ -554,31 +505,38 @@ export default function App() {
               <p className="text-sm font-mono text-emerald-400 mt-1 font-bold">{formatTime(callDuration)}</p>
             </div>
 
-            <div className="p-4 rounded-2xl bg-purple-950/40 border border-purple-500/30 text-center my-2 shadow-inner">
-              <div className="w-10 h-10 rounded-full bg-purple-600/30 text-purple-300 flex items-center justify-center mx-auto mb-2">
-                <Volume2 size={20} className="animate-bounce" />
+            <div className="p-4 rounded-2xl bg-purple-950/50 border-2 border-purple-500/40 text-center my-3 shadow-lg">
+              <div className="w-12 h-12 rounded-full bg-purple-600/30 text-amber-300 flex items-center justify-center mx-auto mb-2.5">
+                <Volume2 size={24} className="animate-bounce" />
               </div>
-              <p className="text-xs text-purple-200 leading-relaxed font-medium">
-                "እንኳን ወደ ኢትዮጵያ ንግድ ባንክ በደህና መጡ! የደንበኞች ድጋፍ ሰጪ ይስሀቅን ለማግኘት <span className="font-bold text-amber-300 underline text-sm">4 ቁጥርን</span> ይጫኑ!"
+              <p className="text-sm text-purple-100 leading-relaxed font-semibold">
+                እንኳን ወደ ኢትዮጵያ ንግድ ባንክ በደህና መጡ!
+              </p>
+              <p className="text-xs text-amber-300 mt-1 font-medium">
+                የደንበኞች ድጋፍ ሰጪ ይስሀቅን ለማግኘት ከታች ያለውን <span className="font-bold underline">4 ቁጥርን</span> ይጫኑ!
               </p>
             </div>
 
-            <div className="my-auto px-4">
+            {/* Direct 4 Button */}
+            <div className="my-auto px-2">
               <button
                 onClick={transferToAgent}
-                className="w-full py-4 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-base shadow-lg shadow-purple-900/40 flex items-center justify-center gap-3 active:scale-98 transition border border-purple-400/40"
+                className="w-full py-5 rounded-2xl bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-base shadow-xl shadow-purple-900/50 flex items-center justify-center gap-3 active:scale-95 transition border-2 border-amber-400 ring-4 ring-amber-400/20"
               >
-                <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-xl font-black">
+                <div className="w-12 h-12 rounded-xl bg-amber-400 text-purple-950 flex items-center justify-center text-3xl font-black shadow-md">
                   4
                 </div>
-                <span>ወደ ደንበኞች ድጋፍ ለማስተላለፍ 4ን ይጫኑ</span>
+                <div className="text-left">
+                  <p className="text-xs font-black text-amber-200 uppercase tracking-wider">ይጫኑት (Click 4)</p>
+                  <p className="text-sm font-bold text-white">ከይስሀቅ ጋር በቀጥታ ለመነጋገር</p>
+                </div>
               </button>
             </div>
 
             <div className="flex justify-center pt-3">
               <button
                 onClick={handleEndCall}
-                className="px-6 py-2.5 rounded-full bg-rose-600/90 hover:bg-rose-600 text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition active:scale-95"
+                className="px-6 py-2.5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold flex items-center gap-2 shadow-lg transition active:scale-95"
               >
                 <PhoneOff size={16} />
                 <span>ጥሪውን አቋርጥ</span>
@@ -587,32 +545,31 @@ export default function App() {
           </div>
         )}
 
-        {/* SCREEN 4: CBE AI SMART SUPPORT (Real AmehaNeural Voice + Real Listening) */}
+        {/* SCREEN 4: CBE AI SMART SUPPORT */}
         {callState === 'agent' && (
           <div className="flex-1 flex flex-col justify-between bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 overflow-hidden">
             
             {/* Top Agent Bar */}
-            <div className="p-4 bg-slate-900/95 border-b border-slate-800 shadow-md">
+            <div className="p-3.5 bg-slate-900/95 border-b border-slate-800 shadow-md">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  {/* Dynamic Glowing Live Avatar */}
+                  {/* Avatar */}
                   <div className="relative">
                     <div
-                      className={`w-14 h-14 rounded-2xl bg-gradient-to-tr from-purple-800 via-indigo-700 to-amber-500 p-0.5 shadow-lg transition-transform ${
-                        isSpeaking ? 'scale-105 ring-4 ring-amber-400/60 shadow-amber-500/30' : isListening ? 'scale-105 ring-4 ring-emerald-400/60 shadow-emerald-500/30' : ''
+                      className={`w-13 h-13 rounded-2xl bg-gradient-to-tr from-purple-800 via-indigo-700 to-amber-500 p-0.5 shadow-lg transition-transform ${
+                        isPlaying ? 'scale-105 ring-4 ring-amber-400/70 shadow-amber-500/40' : isListening ? 'scale-105 ring-4 ring-emerald-400/70 shadow-emerald-500/40' : ''
                       }`}
                     >
                       <div className="w-full h-full bg-slate-900 rounded-[14px] flex items-center justify-center relative overflow-hidden">
                         <Headphones
-                          size={28}
+                          size={26}
                           className={`text-amber-300 transition-transform ${
-                            isSpeaking ? 'rotate-3 scale-110 text-amber-200' : isListening ? 'text-emerald-400 animate-pulse' : ''
+                            isPlaying ? 'rotate-3 scale-110 text-amber-200' : isListening ? 'text-emerald-400 animate-pulse' : ''
                           }`}
                         />
                       </div>
                     </div>
-                    {/* Online indicator */}
-                    <span className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 border-2 border-slate-900 flex items-center justify-center">
+                    <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-slate-900 flex items-center justify-center">
                       <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
                     </span>
                   </div>
@@ -620,41 +577,43 @@ export default function App() {
                   <div>
                     <div className="flex items-center gap-1.5">
                       <h3 className="font-bold text-sm text-white">ይስሀቅ (CBE Support)</h3>
-                      <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[10px] font-semibold border border-purple-500/30">
+                      <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
                         Ameha AI
                       </span>
                     </div>
                     <p className="text-xs text-slate-400 flex items-center gap-1">
-                      <span>ጥሪ ማዕከል</span> • <span className="text-emerald-400 font-mono font-semibold">{formatTime(callDuration)}</span>
+                      <span>መስመር 951</span> • <span className="text-emerald-400 font-mono font-bold">{formatTime(callDuration)}</span>
                     </p>
-                    <p className="text-[10px] text-amber-300 font-medium">
-                      {isSpeaking ? (
-                        <span className="text-amber-300 flex items-center gap-1">
+                    <p className="text-[10px] font-medium mt-0.5">
+                      {isPlaying ? (
+                        <span className="text-amber-300 flex items-center gap-1 font-bold animate-pulse">
                           <Activity size={10} className="animate-spin text-amber-400" />
-                          ይስሀቅ በድምፅ እየተናገረ ነው...
+                          ይስሀቅ በድምፅ እያወራ ነው...
                         </span>
                       ) : isListening ? (
-                        <span className="text-emerald-400 flex items-center gap-1">
-                          <Activity size={10} className="animate-pulse" />
-                          እርስዎን እያዳመጠ ነው (እስኪጨርሱ ይጠብቃል)...
+                        <span className="text-emerald-400 flex items-center gap-1 font-bold animate-pulse">
+                          <Activity size={10} />
+                          እርስዎን እያዳመጠ ነው...
                         </span>
                       ) : (
-                        `👂 ${agentStatus}`
+                        <span className="text-slate-300">👂 {agentStatus}</span>
                       )}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  {/* DIRECT PLAY BUTTON */}
                   <button
                     onClick={() => {
-                      const curStep = CBE_FLOW[dialogueStage];
-                      if (curStep) playAgentAmharicVoice(curStep.audio, curStep.agentText);
+                      const cur = BANKING_STEPS[dialogueStage];
+                      if (cur) playAudioStep(cur.key);
                     }}
-                    className="p-2 rounded-xl bg-purple-900/40 hover:bg-purple-900/70 text-purple-200 border border-purple-500/30 transition"
-                    title="ድምጹን በድጋሚ አጫውት"
+                    className="px-2.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition active:scale-95 flex items-center gap-1"
+                    title="ድምፁን አጫውት"
                   >
-                    <RotateCcw size={16} />
+                    <Play size={14} className="fill-current" />
+                    <span>አጫውት</span>
                   </button>
                   <button
                     onClick={handleEndCall}
@@ -666,45 +625,43 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Status Step Bar */}
-              <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400">
-                <span className="flex items-center gap-1 text-emerald-400 font-medium">
-                  <ShieldCheck size={12} />
-                  ደረጃ {dialogueStage + 1} / {CBE_FLOW.length}
-                </span>
-                <span className="text-slate-300 font-medium truncate max-w-[220px]">
-                  {agentStatus}
-                </span>
-              </div>
+              {/* Error notice if browser blocked autoplay */}
+              {playErrorNotice && (
+                <div className="mt-2 p-2 rounded-lg bg-amber-950/80 border border-amber-500/50 text-[11px] text-amber-200 flex items-center gap-1.5 animate-pulse">
+                  <AlertCircle size={14} className="text-amber-400 shrink-0" />
+                  <span>{playErrorNotice}</span>
+                </div>
+              )}
             </div>
 
             {/* Conversation Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {conversation.map((msg) => (
                 <div
                   key={msg.id}
                   className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}
                 >
-                  <div className="flex items-center gap-1 text-[10px] text-slate-400 mb-1 px-1">
+                  <div className="flex items-center gap-1 text-[10px] text-slate-400 mb-0.5 px-1">
                     <span>{msg.sender === 'user' ? 'እርስዎ (ደንበኛ)' : 'ይስሀቅ (CBE Support)'}</span>
                     <span>• {msg.time}</span>
                   </div>
                   <div
-                    className={`max-w-[86%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed shadow-md ${
+                    className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed shadow-md ${
                       msg.sender === 'user'
                         ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-br-xs'
-                        : 'bg-slate-800/95 border border-purple-500/20 text-slate-100 rounded-bl-xs'
+                        : 'bg-slate-800 border border-purple-500/30 text-slate-100 rounded-bl-xs'
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start justify-between gap-2.5">
                       <span>{msg.text}</span>
-                      {msg.sender === 'agent' && msg.audioFile && (
+                      {msg.sender === 'agent' && msg.stepKey && (
                         <button
-                          onClick={() => playAgentAmharicVoice(msg.audioFile!, msg.text)}
-                          className="text-purple-300 hover:text-white p-0.5 rounded transition mt-0.5 shrink-0"
-                          title="ይህንን ድምፅ አጫውት"
+                          onClick={() => playAudioStep(msg.stepKey!)}
+                          className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-2 py-1 rounded-lg transition shrink-0 font-bold flex items-center gap-1 shadow-sm active:scale-95"
+                          title="ድምፁን አጫውት"
                         >
-                          <Volume2 size={13} />
+                          <Play size={10} className="fill-current" />
+                          <span className="text-[10px]">ድምፅ</span>
                         </button>
                       )}
                     </div>
@@ -723,7 +680,7 @@ export default function App() {
 
               {/* Quick stage suggestions */}
               <div className="flex flex-wrap gap-1.5 mb-2 max-h-24 overflow-y-auto pb-1">
-                {CBE_FLOW[dialogueStage]?.quickReplies.map((opt, i) => (
+                {BANKING_STEPS[dialogueStage]?.quickReplies.map((opt, i) => (
                   <button
                     key={i}
                     onClick={() => {
