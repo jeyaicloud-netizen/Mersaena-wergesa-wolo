@@ -5,36 +5,24 @@ import {
   Delete,
   Mic,
   Volume2,
-  VolumeX,
   Building2,
-  ShieldCheck,
   Send,
   Sparkles,
-  RotateCcw,
   Headphones,
-  ChevronRight,
   Activity,
-  Play,
-  AlertCircle
+  Play
 } from 'lucide-react';
-import { AUDIO_BASE64 } from './audioData';
 
 interface ChatMessage {
   id: string;
   sender: 'agent' | 'user';
   text: string;
   time: string;
-  stepKey?: keyof typeof AUDIO_BASE64;
 }
 
-const BANKING_STEPS: {
-  key: keyof typeof AUDIO_BASE64;
-  agentText: string;
-  quickReplies: string[];
-  agentStatus: string;
-}[] = [
+const BANKING_STEPS = [
   {
-    key: 'step1',
+    stepIndex: 0,
     agentText: "ሰላም ጤና ይስጥልኝ ከኢትዮጵያ ንግድ ባንክ ነው፤ እባክዎት ምን ልርዳዎት?",
     quickReplies: [
       "ገንዘብ ልኬ ነበር ግን ለሰውየው አልደረሰም",
@@ -44,7 +32,7 @@ const BANKING_STEPS: {
     agentStatus: "ይስሀቅ መስመር ላይ ነው • እርስዎን በማዳመጥ ላይ"
   },
   {
-    key: 'step2',
+    stepIndex: 1,
     agentText: "እሺ ደንበኛችን፤ ለመሆኑ ገንዘቡን ከየትኛው አካውንት ነው የላኩት? ወይስ ከእርስዎ የሲቢኢ ብር አካውንት ነው?",
     quickReplies: [
       "ከራሴ የሲቢኢ ብር (CBE Birr) አካውንት ነው የላኩት",
@@ -54,7 +42,7 @@ const BANKING_STEPS: {
     agentStatus: "ይስሀቅ የአካውንት አይነት እየጠየቀ ነው"
   },
   {
-    key: 'step3',
+    stepIndex: 2,
     agentText: "እሺ አዳምጬ ተረድቻለሁ፤ እባክዎ የተላከለት ሰው የአካውንት ስም እና የአካውንት ቁጥር ይንገሩኝ?",
     quickReplies: [
       "አካውንት ቁጥር 100023456789፤ ስሙ አበበ ከበደ",
@@ -64,7 +52,7 @@ const BANKING_STEPS: {
     agentStatus: "ይስሀቅ የተቀባይ መረጃ በመጠየቅ ላይ..."
   },
   {
-    key: 'step4',
+    stepIndex: 3,
     agentText: "እሺ በሲስተማችን ቼክ እያደረግሁ ነው... አዎ! ግብይቱን እያየሁት ነው፤ በሲስተም መዘግየት ምክንያት ነው መልዕክቱ ያልደረሰው። በ24 ሰዓት ውስጥ ለተላከለት ሰው ሙሉ በሙሉ ይደርሳል!",
     quickReplies: [
       "እሺ በጣም አመሰግናለሁ፤ ሌላ ጥያቄ የለኝም",
@@ -74,7 +62,7 @@ const BANKING_STEPS: {
     agentStatus: "በሲስተም ቼክ ተደርጓል • ግብይቱ ተረጋግጧል"
   },
   {
-    key: 'step5',
+    stepIndex: 4,
     agentText: "በጣም ደስ ብሎኛል! ስለደወሉ ከልብ እናመሰግናለን፤ መልካም ቀን ይሁንልዎ! የኢትዮጵያ ንግድ ባንክ ሁሌም ከእርስዎ ጋር ነው!",
     quickReplies: [
       "እንደገና ደውል (951)",
@@ -94,46 +82,10 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [dialogueStage, setDialogueStage] = useState<number>(0);
   const [agentStatus, setAgentStatus] = useState<string>('መስመር ላይ ነው');
-  const [playErrorNotice, setPlayErrorNotice] = useState<string>('');
 
-  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const timerRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const recognitionRef = useRef<any>(null);
-
-  // Initialize and attach event listeners to hidden native audio tag
-  useEffect(() => {
-    const audio = audioPlayerRef.current;
-    if (!audio) return;
-
-    const handlePlay = () => {
-      setIsPlaying(true);
-      setAgentStatus('ይስሀቅ በድምፅ እያወራ ነው...');
-      setPlayErrorNotice('');
-    };
-
-    const handleEnded = () => {
-      setIsPlaying(false);
-      setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-    };
-
-    const handleError = () => {
-      setIsPlaying(false);
-      setAgentStatus('እርስዎን በማዳመጥ ላይ...');
-    };
-
-    audio.addEventListener('play', handlePlay);
-    audio.addEventListener('playing', handlePlay);
-    audio.addEventListener('ended', handleEnded);
-    audio.addEventListener('error', handleError);
-
-    return () => {
-      audio.removeEventListener('play', handlePlay);
-      audio.removeEventListener('playing', handlePlay);
-      audio.removeEventListener('ended', handleEnded);
-      audio.removeEventListener('error', handleError);
-    };
-  }, []);
 
   // Call timer
   useEffect(() => {
@@ -161,36 +113,38 @@ export default function App() {
   };
 
   /**
-   * Directly load base64 sound into audioPlayerRef and execute .play()
+   * Browser Speech Synthesis: Speaks Amharic directly on any mobile device or desktop
    */
-  const playAudioStep = (stepKey: keyof typeof AUDIO_BASE64) => {
-    const audio = audioPlayerRef.current;
-    if (!audio) return;
-
+  const speakText = (text: string) => {
+    if (!('speechSynthesis' in window)) return;
     try {
-      const dataUri = AUDIO_BASE64[stepKey];
-      if (!dataUri) return;
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'am-ET';
+      utterance.rate = 0.92;
 
-      audio.pause();
-      audio.src = dataUri;
-      audio.load();
-
-      const promise = audio.play();
-      if (promise !== undefined) {
-        promise
-          .then(() => {
-            setIsPlaying(true);
-            setPlayErrorNotice('');
-          })
-          .catch((err) => {
-            console.error('Playback error:', err);
-            setIsPlaying(false);
-            setPlayErrorNotice('ስልክዎ ድምፁን አግዶታል፤ ከላይ ያለውን ቢጫ "▶️ አጫውት" ንኩት!');
-          });
+      const voices = window.speechSynthesis.getVoices();
+      const amharicVoice = voices.find(v => v.lang.includes('am') || v.lang.includes('ET'));
+      if (amharicVoice) {
+        utterance.voice = amharicVoice;
       }
-    } catch (e) {
-      console.error(e);
-      setPlayErrorNotice('እባክዎ "▶️ አጫውት" የሚለውን ይጫኑ');
+
+      utterance.onstart = () => {
+        setIsPlaying(true);
+        setAgentStatus('ይስሀቅ በድምፅ እያወራ ነው...');
+      };
+      utterance.onend = () => {
+        setIsPlaying(false);
+        setAgentStatus('እርስዎን በማዳመጥ ላይ...');
+      };
+      utterance.onerror = () => {
+        setIsPlaying(false);
+        setAgentStatus('እርስዎን በማዳመጥ ላይ...');
+      };
+
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      setIsPlaying(false);
     }
   };
 
@@ -259,12 +213,6 @@ export default function App() {
 
   const handleStartCall = (num = dialNumber) => {
     if (!num.trim()) return;
-
-    if (audioPlayerRef.current) {
-      audioPlayerRef.current.src = AUDIO_BASE64.step1;
-      audioPlayerRef.current.load();
-    }
-
     setCallState('calling');
     setTimeout(() => {
       setCallState('ivr');
@@ -282,12 +230,11 @@ export default function App() {
         id: 'step-0',
         sender: 'agent',
         text: first.agentText,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        stepKey: 'step1'
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       }
     ]);
 
-    playAudioStep('step1');
+    speakText(first.agentText);
   };
 
   // Handle user response
@@ -314,12 +261,11 @@ export default function App() {
           id: `agent-${Date.now()}`,
           sender: 'agent',
           text: nextStep.agentText,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          stepKey: nextStep.key
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
         setConversation((prev) => [...prev, agentMsg]);
         setAgentStatus(nextStep.agentStatus);
-        playAudioStep(nextStep.key);
+        speakText(nextStep.agentText);
       }, 700);
     } else {
       setTimeout(() => {
@@ -330,8 +276,8 @@ export default function App() {
 
   // End Call
   const handleEndCall = () => {
-    if (audioPlayerRef.current) {
-      audioPlayerRef.current.pause();
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
     }
     setCallState('ended');
     setTimeout(() => {
@@ -347,9 +293,6 @@ export default function App() {
   return (
     <div className="flex justify-center items-center min-h-screen bg-[#060A12] p-2 sm:p-4 font-sans text-slate-100">
       
-      {/* Hidden native Audio element holding base64 sound */}
-      <audio ref={audioPlayerRef} playsInline preload="auto" />
-
       {/* Main Mobile App Frame */}
       <div className="w-full max-w-[420px] h-[92vh] max-h-[860px] bg-[#0E1726] rounded-[38px] shadow-2xl border-4 border-slate-700/60 flex flex-col overflow-hidden relative">
         
@@ -361,7 +304,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
-              Ameha AI Sound
+              CBE AI System
             </span>
             <span className="font-semibold text-slate-200">
               {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -378,7 +321,7 @@ export default function App() {
                 <span>የኢትዮጵያ ንግድ ባንክ AI ደንበኞች ድጋፍ</span>
               </div>
               <h1 className="text-lg font-bold text-slate-100">951 ይደውሉ</h1>
-              <p className="text-xs text-slate-400 mt-0.5">በእውነተኛው የአመሃ (Ameha) AI ድምፅ የተዘጋጀ</p>
+              <p className="text-xs text-slate-400 mt-0.5">የደንበኞች ድጋፍ መስመር</p>
             </div>
 
             {/* Display */}
@@ -578,7 +521,7 @@ export default function App() {
                     <div className="flex items-center gap-1.5">
                       <h3 className="font-bold text-sm text-white">ይስሀቅ (CBE Support)</h3>
                       <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/30">
-                        Ameha AI
+                        AI Voice
                       </span>
                     </div>
                     <p className="text-xs text-slate-400 flex items-center gap-1">
@@ -603,11 +546,10 @@ export default function App() {
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  {/* DIRECT PLAY BUTTON */}
                   <button
                     onClick={() => {
                       const cur = BANKING_STEPS[dialogueStage];
-                      if (cur) playAudioStep(cur.key);
+                      if (cur) speakText(cur.agentText);
                     }}
                     className="px-2.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition active:scale-95 flex items-center gap-1"
                     title="ድምፁን አጫውት"
@@ -624,14 +566,6 @@ export default function App() {
                   </button>
                 </div>
               </div>
-
-              {/* Error notice if browser blocked autoplay */}
-              {playErrorNotice && (
-                <div className="mt-2 p-2 rounded-lg bg-amber-950/80 border border-amber-500/50 text-[11px] text-amber-200 flex items-center gap-1.5 animate-pulse">
-                  <AlertCircle size={14} className="text-amber-400 shrink-0" />
-                  <span>{playErrorNotice}</span>
-                </div>
-              )}
             </div>
 
             {/* Conversation Messages */}
@@ -654,9 +588,9 @@ export default function App() {
                   >
                     <div className="flex items-start justify-between gap-2.5">
                       <span>{msg.text}</span>
-                      {msg.sender === 'agent' && msg.stepKey && (
+                      {msg.sender === 'agent' && (
                         <button
-                          onClick={() => playAudioStep(msg.stepKey!)}
+                          onClick={() => speakText(msg.text)}
                           className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-2 py-1 rounded-lg transition shrink-0 font-bold flex items-center gap-1 shadow-sm active:scale-95"
                           title="ድምፁን አጫውት"
                         >
